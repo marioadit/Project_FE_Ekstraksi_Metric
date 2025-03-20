@@ -68,8 +68,39 @@ def count_fanout(class_code):
     unique_classes = set(filtered)
     return len(unique_classes)
 
+def is_accessor_or_mutator(method_name, method_code):
+    """
+    Menentukan apakah suatu metode adalah accessor (getter) atau mutator (setter).
+    """
+    # Cek nama metode
+    if method_name.startswith(("get", "is", "has")):  # Accessor (getter)
+        return True
+    if method_name.startswith("set"):  # Mutator (setter)
+        return True
+    
+    # Cek logika sederhana: jika metode hanya mengembalikan nilai atau mengubah satu nilai
+    if "return" in method_code and "=" not in method_code:  # Accessor
+        return True
+    if "=" in method_code and "return" not in method_code:  # Mutator
+        return True
+    
+    return False
+
+def count_nomamm(class_body):
+    """
+    Menghitung jumlah metode yang bukan accessor atau mutator (NOMNAMM_type).
+    """
+    nomamm_count = 0
+    for member in class_body.members:
+        if isinstance(member, node.FunctionDeclaration):
+            method_name = member.name
+            method_code = str(member.body) if member.body else ""
+            if not is_accessor_or_mutator(method_name, method_code):
+                nomamm_count += 1
+    return nomamm_count
+
 def extracted_method(file_path):
-    """Ekstrak informasi metode dari file Kotlin, termasuk ATFD_type dan FANOUT_type."""
+    """Ekstrak informasi metode dari file Kotlin, termasuk ATFD_type, FANOUT_type, dan NOMNAMM_type."""
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             code = f.read()
@@ -79,18 +110,19 @@ def extracted_method(file_path):
         package_name = result.package.name if result.package else "Unknown"
 
         if not result.declarations:
-            return [{"Package": package_name, "Class": "Unknown", "Method": "None", "LOC": 0, "Max Nesting": 0, "CC": 0, "WOC": 0, "ATFD_type": 0, "FANOUT_type": 0, "Error": "No class declaration found"}]
+            return [{"Package": package_name, "Class": "Unknown", "Method": "None", "LOC": 0, "Max Nesting": 0, "CC": 0, "WOC": 0, "ATFD_type": 0, "FANOUT_type": 0, "NOMNAMM_type": 0, "Error": "No class declaration found"}]
         
         class_declaration = result.declarations[0]
         class_name = class_declaration.name
         
         if class_declaration.body is None:
-            return [{"Package": package_name, "Class": class_name, "Method": "None", "LOC": 0, "Max Nesting": 0, "CC": 0, "WOC": 0, "ATFD_type": 0, "FANOUT_type": 0, "Error": "Class has no body"}]
+            return [{"Package": package_name, "Class": class_name, "Method": "None", "LOC": 0, "Max Nesting": 0, "CC": 0, "WOC": 0, "ATFD_type": 0, "FANOUT_type": 0, "NOMNAMM_type": 0, "Error": "Class has no body"}]
         
         datas = []
         method_function = {}
         atfd_total = 0  # Total ATFD untuk seluruh kelas
         fanout_total = count_fanout(code)  # Hitung FANOUT_type untuk kelas ini
+        nomamm_total = count_nomamm(class_declaration.body)  # Hitung NOMNAMM_type untuk kelas ini
         
         for member in class_declaration.body.members:
             if isinstance(member, node.FunctionDeclaration):
@@ -117,13 +149,15 @@ def extracted_method(file_path):
                 "WOC": woc,
                 "ATFD_type": atfd_total,  # Tambahkan ATFD_type (total per kelas)
                 "FANOUT_type": fanout_total,  # Tambahkan FANOUT_type (total per kelas)
+                "NOMNAMM_type": nomamm_total,  # Tambahkan NOMNAMM_type (total per kelas)
                 "Error": ""
             })
         
-        return datas if datas else [{"Package": package_name, "Class": class_name, "Method": "None", "LOC": 0, "Max Nesting": 0, "CC": 0, "WOC": 0, "ATFD_type": 0, "FANOUT_type": 0, "Error": "No functions found"}]
+        return datas if datas else [{"Package": package_name, "Class": class_name, "Method": "None", "LOC": 0, "Max Nesting": 0, "CC": 0, "WOC": 0, "ATFD_type": 0, "FANOUT_type": 0, "NOMNAMM_type": 0, "Error": "No functions found"}]
     
     except Exception as e:
-        return [{"Package": "Error", "Class": "Error", "Method": "Error", "LOC": "Error", "Max Nesting": 0, "CC": 0, "WOC": 0, "ATFD_type": 0, "FANOUT_type": 0, "Error": str(e)}]
+        return [{"Package": "Error", "Class": "Error", "Method": "Error", "LOC": "Error", "Max Nesting": 0, "CC": 0, "WOC": 0, "ATFD_type": 0, "FANOUT_type": 0, "NOMNAMM_type": 0, "Error": str(e)}]
+
 
 def extract_and_parse(file):
     """Ekstrak arsip ZIP/RAR dan proses file Kotlin."""
