@@ -1,0 +1,63 @@
+<resources>
+    <string name="app_name">BMS Monitor</string>
+    <string name="app_name_big">BMS</string>
+    <string name="app_name_thin">Monitor</string>
+    <string name="appNameSettings">BMS Monitor - Settings</string>
+    <string name="appNameStats">BMS Monitor - Stats</string>
+
+    <string name="waitForBms">Waiting for BMS…</string>
+    <string name="connectedToBms">BMS: %1$s</string>
+    <string name="connectedToBike">Bike: %1$s</string>
+
+    <string name="power">Power</string>
+    <string name="speed">Speed</string>
+    <string name="capacity">Capacity</string>
+    <string name="cells">Cell Voltage</string>
+
+    <string name="navBattery">Battery</string>
+    <string name="navBike">Bike</string>
+    <string name="navSettings">Settings</string>
+    <string name="navStats">Stats</string>
+
+    <string name="imageBattery">Battery</string>
+    <string name="imageTemperature">Temperature</string>
+
+    <string name="threeDotPlaceholder">…</string>
+
+    <string name="zeroZero">0</string>
+    <string name="zeroDotZero">0.0</string>
+    <string name="zeroClock">00:00</string>
+
+    <string name="unitDisplayWatt">W</string>
+    <string name="unitDisplayVolt">V</string>
+    <string name="unitDisplayAmpere">A</string>
+    <string name="unitDisplayAmpereHours">Ah</string>
+    <string name="unitDisplayWattHours">Wh</string>
+    <string name="unitDisplayHours">h</string>
+    <string name="unitDisplayKilometers">Km</string>
+    <string name="unitDisplayLevel">Lvl</string>
+    <string name="unitDisplayKilometersPerHour">Km/h</string>
+    <string name="unitDisplayPercent">%</string>
+    <string name="unitDisplayCelsius">°C</string>
+
+    <string name="settingsBatteryEnabled">Battery Service</string>
+    <string name="settingsBikeEnabled">Bike Service</string>
+
+    <string name="settingsBluetoothMac">BMS MAC Address</string>
+    <string name="settingsBluetoothPin">BMS Bluetooth Pin</string>
+
+    <string name="settingsBluetoothMacBike">Bike MAC Address</string>
+    <string name="settingsBluetoothPinBike">Bike Bluetooth Pin</string>
+
+    <string name="settingsSmoothingMinutes">Smoothing Minutes</string>
+    <string name="settingsRefreshInterval">Refresh Interval (ms)</string>
+
+    <string name="settingsMinCellVoltage">Min Cell Voltage (mV)</string>
+    <string name="settingsMaxCellVoltage">Max Cell Voltage (mV)</string>
+
+    <string name="settingsMinPower">Min Power (W)</string>
+    <string name="settingsMaxPower">Max Power (W)</string>
+
+    <string name="settingsMaxSpeed">Max Speed (Km/h)</string>
+    <string name="cellbalance">Cell Balance</string>
+</resources>
