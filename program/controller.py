@@ -55,8 +55,21 @@ def count_atfd_method(method_code):
     filtered = [m for m in matches if m[0] not in ['this', 'super']]
     return len(filtered)
 
+def count_fanout(class_code):
+    """Menghitung jumlah kelas lain yang digunakan oleh kelas ini (FANOUT_type)."""
+    import re
+    # Pola regex untuk mendeteksi penggunaan kelas lain (misal: 'ClassName.method()' atau 'ClassName()')
+    pattern = r'\b([A-Z][a-zA-Z0-9_]*)\b(?=\s*\.|\s*\()'
+    matches = re.findall(pattern, class_code)
+    # Filter out keyword Kotlin (seperti 'if', 'for', 'while') dan nama kelas sendiri
+    keywords = ['if', 'for', 'while', 'when', 'try', 'catch', 'else', 'this', 'super']
+    filtered = [m for m in matches if m not in keywords and not m[0].islower()]
+    # Menghapus duplikat dan mengembalikan jumlah kelas unik
+    unique_classes = set(filtered)
+    return len(unique_classes)
+
 def extracted_method(file_path):
-    """Ekstrak informasi metode dari file Kotlin, termasuk ATFD_type."""
+    """Ekstrak informasi metode dari file Kotlin, termasuk ATFD_type dan FANOUT_type."""
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             code = f.read()
@@ -66,17 +79,18 @@ def extracted_method(file_path):
         package_name = result.package.name if result.package else "Unknown"
 
         if not result.declarations:
-            return [{"Package": package_name, "Class": "Unknown", "Method": "None", "LOC": 0, "Max Nesting": 0, "CC": 0, "WOC": 0, "ATFD_type": 0, "Error": "No class declaration found"}]
+            return [{"Package": package_name, "Class": "Unknown", "Method": "None", "LOC": 0, "Max Nesting": 0, "CC": 0, "WOC": 0, "ATFD_type": 0, "FANOUT_type": 0, "Error": "No class declaration found"}]
         
         class_declaration = result.declarations[0]
         class_name = class_declaration.name
         
         if class_declaration.body is None:
-            return [{"Package": package_name, "Class": class_name, "Method": "None", "LOC": 0, "Max Nesting": 0, "CC": 0, "WOC": 0, "ATFD_type": 0, "Error": "Class has no body"}]
+            return [{"Package": package_name, "Class": class_name, "Method": "None", "LOC": 0, "Max Nesting": 0, "CC": 0, "WOC": 0, "ATFD_type": 0, "FANOUT_type": 0, "Error": "Class has no body"}]
         
         datas = []
         method_function = {}
         atfd_total = 0  # Total ATFD untuk seluruh kelas
+        fanout_total = count_fanout(code)  # Hitung FANOUT_type untuk kelas ini
         
         for member in class_declaration.body.members:
             if isinstance(member, node.FunctionDeclaration):
@@ -102,13 +116,14 @@ def extracted_method(file_path):
                 "CC": cc_value,
                 "WOC": woc,
                 "ATFD_type": atfd_total,  # Tambahkan ATFD_type (total per kelas)
+                "FANOUT_type": fanout_total,  # Tambahkan FANOUT_type (total per kelas)
                 "Error": ""
             })
         
-        return datas if datas else [{"Package": package_name, "Class": class_name, "Method": "None", "LOC": 0, "Max Nesting": 0, "CC": 0, "WOC": 0, "ATFD_type": 0, "Error": "No functions found"}]
+        return datas if datas else [{"Package": package_name, "Class": class_name, "Method": "None", "LOC": 0, "Max Nesting": 0, "CC": 0, "WOC": 0, "ATFD_type": 0, "FANOUT_type": 0, "Error": "No functions found"}]
     
     except Exception as e:
-        return [{"Package": "Error", "Class": "Error", "Method": "Error", "LOC": "Error", "Max Nesting": 0, "CC": 0, "WOC": 0, "ATFD_type": 0, "Error": str(e)}]
+        return [{"Package": "Error", "Class": "Error", "Method": "Error", "LOC": "Error", "Max Nesting": 0, "CC": 0, "WOC": 0, "ATFD_type": 0, "FANOUT_type": 0, "Error": str(e)}]
 
 def extract_and_parse(file):
     """Ekstrak arsip ZIP/RAR dan proses file Kotlin."""
