@@ -98,23 +98,6 @@ def count_fanout(class_code):
     unique_classes = set(filtered)
     return len(unique_classes)
 
-def is_accessor_or_mutator(method_name, method_code):
-    """
-    Menentukan apakah suatu metode adalah accessor (getter) atau mutator (setter).
-    """
-    # Cek nama metode
-    if method_name.startswith(("get", "is", "has")):  # Accessor (getter)
-        return True
-    if method_name.startswith("set"):  # Mutator (setter)
-        return True
-    
-    # Cek logika sederhana: jika metode hanya mengembalikan nilai atau mengubah satu nilai
-    if "return" in method_code and "=" not in method_code:  # Accessor
-        return True
-    if "=" in method_code and "return" not in method_code:  # Mutator
-        return True
-    
-    return False
 
 def count_noa_type(class_declaration):
     """Menghitung jumlah atribut dalam sebuah kelas (NOA_type)."""
