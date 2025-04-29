@@ -98,7 +98,6 @@ def count_fanout(class_code):
     unique_classes = set(filtered)
     return len(unique_classes)
 
-
 def count_noa_type(class_declaration):
     """Menghitung jumlah atribut dalam sebuah kelas (NOA_type)."""
     if not hasattr(class_declaration, 'body') or class_declaration.body is None:
