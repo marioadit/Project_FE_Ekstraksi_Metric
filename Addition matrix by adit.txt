@@ -5,5 +5,5 @@ NOA_Type worked
 NIM_type worked
 DIT_type worked
 FANOUT_method worked
-CFNAMM_method
+CFNAMM_method worked
 ATLD_method

@@ -292,8 +292,61 @@ def count_fanout_method(method_body):
     
     return len(external_calls)
 
+def count_cfnamm_method(class_declaration):
+    """
+    Menghitung CFNAMM_method (Coupling Factor of Non-Accessor and Mutator Methods) untuk sebuah kelas.
+    CFNAMM_method = (Number of Non-Accessor/Mutator Methods Coupled) / (Total Non-Accessor/Mutator Methods)
+    """
+    if not hasattr(class_declaration, 'body') or class_declaration.body is None:
+        return 0
+    
+    # Identifikasi semua metode non-accessor/non-mutator
+    non_acc_mut_methods = []
+    coupled_methods = set()
+    
+    for member in class_declaration.body.members:
+        if isinstance(member, node.FunctionDeclaration):
+            function_name = member.name
+            
+            # Skip constructor
+            if function_name == class_declaration.name:
+                continue
+                
+            # Check if it's an accessor (getter) or mutator (setter)
+            is_accessor_or_mutator = False
+            
+            # Accessor typically starts with 'get' or has no prefix but returns a class property
+            if function_name.startswith('get') or function_name.startswith('is'):
+                is_accessor_or_mutator = True
+            
+            # Mutator typically starts with 'set' and changes a class property
+            elif function_name.startswith('set'):
+                is_accessor_or_mutator = True
+            
+            # Store non-accessor/mutator methods for analysis
+            if not is_accessor_or_mutator:
+                body_str = str(member.body) if member.body else ""
+                non_acc_mut_methods.append((function_name, body_str))
+    
+    # If there are no non-accessor/mutator methods, return 0
+    total_non_acc_mut = len(non_acc_mut_methods)
+    if total_non_acc_mut == 0:
+        return 0
+    
+    # Check coupling between methods
+    for method_name, body_str in non_acc_mut_methods:
+        # A method is coupled if it calls another method in the class
+        for other_method_name, _ in non_acc_mut_methods:
+            if method_name != other_method_name and other_method_name in body_str:
+                coupled_methods.add(method_name)
+                break
+    
+    # Calculate CFNAMM_method
+    coupled_count = len(coupled_methods)
+    return coupled_count / total_non_acc_mut if total_non_acc_mut > 0 else 0
+
 def extracted_method(file_path):
-    """Ekstrak informasi metode dari file Kotlin, termasuk ATFD_type, FANOUT_type, NOMNAMM_type, NOA_type, NIM_type, DIT_type, dan FANOUT_method."""
+    """Ekstrak informasi metode dari file Kotlin, termasuk ATFD_type, FANOUT_type, NOMNAMM_type, NOA_type, NIM_type, DIT_type, FANOUT_method, dan CFNAMM_method."""
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             code = f.read()
@@ -318,6 +371,7 @@ def extracted_method(file_path):
                 "NIM_type": 0,
                 "DIT_type": 0,
                 "FANOUT_method": 0,
+                "CFNAMM_method": 0,
                 "Error": "No class declaration found"
             }]
         
@@ -340,6 +394,7 @@ def extracted_method(file_path):
                 "NIM_type": 0,
                 "DIT_type": 0,
                 "FANOUT_method": 0,
+                "CFNAMM_method": 0,
                 "Error": "Class has no body"
             }]
         
@@ -353,6 +408,7 @@ def extracted_method(file_path):
         noa_total = count_noa_type(class_declaration)
         nim_total = count_nim_type(class_declaration)
         dit_total = count_dit_type(class_declaration)
+        cfnamm_total = count_cfnamm_method(class_declaration)
         
         # Dictionary untuk menyimpan nilai FANOUT_method
         fanout_method_values = {}
@@ -393,6 +449,7 @@ def extracted_method(file_path):
                 "NIM_type": nim_total,
                 "DIT_type": dit_total,
                 "FANOUT_method": fanout_method_values.get(function_name, 0),
+                "CFNAMM_method": cfnamm_total,
                 "Error": ""
             })
         
@@ -411,6 +468,7 @@ def extracted_method(file_path):
             "NIM_type": nim_total,
             "DIT_type": dit_total,
             "FANOUT_method": 0,
+            "CFNAMM_method": cfnamm_total,
             "Error": "No functions found" if class_declaration.body.members else "Class has no members"
         }]
     
@@ -430,6 +488,7 @@ def extracted_method(file_path):
             "NIM_type": 0,
             "DIT_type": 0,
             "FANOUT_method": 0,
+            "CFNAMM_method": 0,
             "Error": str(e)
         }]
 
