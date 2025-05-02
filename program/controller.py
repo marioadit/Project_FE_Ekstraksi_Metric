@@ -222,8 +222,29 @@ def count_nim_type(class_declaration):
     
     return nim_count
 
+def count_dit_type(class_declaration):
+    """
+    Menghitung Depth of Inheritance Tree (DIT_type) untuk sebuah kelas Kotlin.
+    DIT_type adalah panjang jalur warisan dari kelas saat ini ke kelas root.
+    """
+    # Every Kotlin class implicitly extends Any, so minimum DIT is 1
+    dit = 1
+    
+    # Check if the class explicitly extends another class
+    if hasattr(class_declaration, 'parents') and class_declaration.parents:
+        for parent in class_declaration.parents:
+            # We count only class inheritance (not interface implementation)
+            parent_str = str(parent).strip()
+            if ':' in parent_str:  # Format typically is "class A : B()"
+                parent_type = parent_str.split(':')[1].strip().split('(')[0].strip()
+                # Ignore Any and interfaces (simplified heuristic)
+                if parent_type != 'Any' and not parent_type.endswith('able'):
+                    dit += 1
+    
+    return dit
+
 def extracted_method(file_path):
-    """Ekstrak informasi metode dari file Kotlin, termasuk ATFD_type, FANOUT_type, NOMNAMM_type, NOA_type, dan NIM_type."""
+    """Ekstrak informasi metode dari file Kotlin, termasuk ATFD_type, FANOUT_type, NOMNAMM_type, NOA_type, NIM_type, dan DIT_type."""
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             code = f.read()
@@ -246,6 +267,7 @@ def extracted_method(file_path):
                 "NOMNAMM_type": 0, 
                 "NOA_type": 0,
                 "NIM_type": 0,
+                "DIT_type": 0,
                 "Error": "No class declaration found"
             }]
         
@@ -266,6 +288,7 @@ def extracted_method(file_path):
                 "NOMNAMM_type": 0, 
                 "NOA_type": 0,
                 "NIM_type": 0,
+                "DIT_type": 0,
                 "Error": "Class has no body"
             }]
         
@@ -278,6 +301,7 @@ def extracted_method(file_path):
         nomnamm_total = count_nomnamm_type(class_declaration)
         noa_total = count_noa_type(class_declaration)
         nim_total = count_nim_type(class_declaration)
+        dit_total = count_dit_type(class_declaration)
         
         for member in class_declaration.body.members:
             if isinstance(member, node.FunctionDeclaration):
@@ -311,6 +335,7 @@ def extracted_method(file_path):
                 "NOMNAMM_type": nomnamm_total,
                 "NOA_type": noa_total,
                 "NIM_type": nim_total,
+                "DIT_type": dit_total,
                 "Error": ""
             })
         
@@ -327,6 +352,7 @@ def extracted_method(file_path):
             "NOMNAMM_type": nomnamm_total,
             "NOA_type": noa_total,
             "NIM_type": nim_total,
+            "DIT_type": dit_total,
             "Error": "No functions found" if class_declaration.body.members else "Class has no members"
         }]
     
@@ -344,6 +370,7 @@ def extracted_method(file_path):
             "NOMNAMM_type": 0,
             "NOA_type": 0,
             "NIM_type": 0,
+            "DIT_type": 0,
             "Error": str(e)
         }]
 

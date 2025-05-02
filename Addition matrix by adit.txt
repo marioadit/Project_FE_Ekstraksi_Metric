@@ -3,4 +3,7 @@ FANNOUT_type worked
 NOMNAMM_type worked
 NOA_Type worked
 NIM_type worked
-DIT_type
+DIT_type worked
+FANOUT_method
+CFNAMM_method
+ATLD_method
