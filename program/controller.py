@@ -197,8 +197,33 @@ def count_noa_type(class_declaration):
             attribute_count += 1
     return attribute_count
 
+def count_nim_type(class_declaration):
+    """
+    Menghitung jumlah metode yang diwariskan dari kelas induk (NIM_type).
+    """
+    if not hasattr(class_declaration, 'body') or class_declaration.body is None:
+        return 0
+    
+    # In Kotlin, inherited methods come from:
+    # 1. Superclass (Any class by default)
+    # 2. Interfaces
+    # This is a simplified approach that counts overridden methods
+    
+    nim_count = 0
+    
+    for member in class_declaration.body.members:
+        if isinstance(member, node.FunctionDeclaration):
+            # Check if the method has 'override' modifier
+            if hasattr(member, 'modifiers') and member.modifiers:
+                for modifier in member.modifiers:
+                    if str(modifier).strip() == 'override':
+                        nim_count += 1
+                        break
+    
+    return nim_count
+
 def extracted_method(file_path):
-    """Ekstrak informasi metode dari file Kotlin, termasuk ATFD_type, FANOUT_type, dan NOMNAMM_type."""
+    """Ekstrak informasi metode dari file Kotlin, termasuk ATFD_type, FANOUT_type, NOMNAMM_type, NOA_type, dan NIM_type."""
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             code = f.read()
@@ -208,22 +233,51 @@ def extracted_method(file_path):
         package_name = result.package.name if result.package else "Unknown"
 
         if not result.declarations:
-            return [{"Package": package_name, "Class": "Unknown", "Method": "None", "LOC": 0, "Max Nesting": 0, "CC": 0, "WOC": 0, "ATFD_type": 0, "FANOUT_type": 0, "NOMNAMM_type": 0, "NOA_type": 0, "Error": "No class declaration found"}]
+            return [{
+                "Package": package_name, 
+                "Class": "Unknown", 
+                "Method": "None", 
+                "LOC": 0, 
+                "Max Nesting": 0, 
+                "CC": 0, 
+                "WOC": 0, 
+                "ATFD_type": 0, 
+                "FANOUT_type": 0, 
+                "NOMNAMM_type": 0, 
+                "NOA_type": 0,
+                "NIM_type": 0,
+                "Error": "No class declaration found"
+            }]
         
         class_declaration = result.declarations[0]
         class_name = class_declaration.name
         
         if class_declaration.body is None:
-            return [{"Package": package_name, "Class": class_name, "Method": "None", "LOC": 0, "Max Nesting": 0, "CC": 0, "WOC": 0, "ATFD_type": 0, "FANOUT_type": 0, "NOMNAMM_type": 0, "NOA_type": 0, "Error": "Class has no body"}]
+            return [{
+                "Package": package_name, 
+                "Class": class_name, 
+                "Method": "None", 
+                "LOC": 0, 
+                "Max Nesting": 0, 
+                "CC": 0, 
+                "WOC": 0, 
+                "ATFD_type": 0, 
+                "FANOUT_type": 0, 
+                "NOMNAMM_type": 0, 
+                "NOA_type": 0,
+                "NIM_type": 0,
+                "Error": "Class has no body"
+            }]
         
         datas = []
         method_function = {}
         
-        # Hitung metrik tingkat kelas sekali saja
+        # Hitung metrik tingkat kelas
         atfd_total = count_atfd_type(class_declaration)
         fanout_total = count_fanout(code)
-        nomnamm_total = count_nomnamm_type(class_declaration)  # Calculate NOMNAMM_type
+        nomnamm_total = count_nomnamm_type(class_declaration)
         noa_total = count_noa_type(class_declaration)
+        nim_total = count_nim_type(class_declaration)
         
         for member in class_declaration.body.members:
             if isinstance(member, node.FunctionDeclaration):
@@ -254,8 +308,9 @@ def extracted_method(file_path):
                 "WOC": woc,
                 "ATFD_type": atfd_total,
                 "FANOUT_type": fanout_total,
-                "NOMNAMM_type": nomnamm_total,  # Add to output
+                "NOMNAMM_type": nomnamm_total,
                 "NOA_type": noa_total,
+                "NIM_type": nim_total,
                 "Error": ""
             })
         
@@ -269,8 +324,9 @@ def extracted_method(file_path):
             "WOC": 0,
             "ATFD_type": atfd_total,
             "FANOUT_type": fanout_total,
-            "NOMNAMM_type": nomnamm_total,  # Add to empty output
+            "NOMNAMM_type": nomnamm_total,
             "NOA_type": noa_total,
+            "NIM_type": nim_total,
             "Error": "No functions found" if class_declaration.body.members else "Class has no members"
         }]
     
@@ -285,8 +341,9 @@ def extracted_method(file_path):
             "WOC": 0,
             "ATFD_type": 0,
             "FANOUT_type": 0,
-            "NOMNAMM_type": 0,  # Add to error output
+            "NOMNAMM_type": 0,
             "NOA_type": 0,
+            "NIM_type": 0,
             "Error": str(e)
         }]
 
