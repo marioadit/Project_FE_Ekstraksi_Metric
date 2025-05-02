@@ -85,7 +85,7 @@ def count_atfd_type(class_declaration):
     
     return atfd
 
-def count_fanout(class_code):
+def count_fanout_type(class_code):
     """Menghitung jumlah kelas lain yang digunakan oleh kelas ini (FANOUT_type) menggunakan AST."""
     try:
         parser = Parser(class_code)
@@ -243,8 +243,57 @@ def count_dit_type(class_declaration):
     
     return dit
 
+def count_fanout_method(method_body):
+    """
+    Menghitung FANOUT_method - jumlah kelas atau fungsi berbeda yang dipanggil dalam suatu metode.
+    
+    Args:
+        method_body (str): Kode metode yang akan dianalisis
+    
+    Returns:
+        int: Jumlah panggilan unik ke metode/kelas eksternal
+    """
+    if not method_body:
+        return 0
+        
+    # Set untuk menyimpan panggilan unik
+    external_calls = set()
+    
+    # Memisahkan kode menjadi baris-baris
+    lines = method_body.split('\n')
+    
+    for line in lines:
+        stripped = line.strip()
+        
+        # Lewati baris kosong dan komentar
+        if not stripped or stripped.startswith('//') or stripped.startswith('/*'):
+            continue
+            
+        # Deteksi panggilan metode
+        # 1. Panggilan dengan format: object.method()
+        if '.' in stripped and '(' in stripped:
+            parts = stripped.split('.')
+            for i in range(len(parts) - 1):
+                if '(' in parts[i+1]:
+                    receiver = parts[i].strip().split(' ')[-1]  # ambil objek yang memanggil metode
+                    method = parts[i+1].split('(')[0].strip()   # ambil nama metode yang dipanggil
+                    
+                    # Tidak menghitung this/super
+                    if receiver not in ('this', 'super'):
+                        # Tambah ke set panggilan eksternal
+                        external_calls.add(f"{receiver}.{method}")
+        
+        # 2. Panggilan langsung: method()
+        elif '(' in stripped and not stripped.startswith(('if', 'for', 'while', 'when', 'switch')):
+            method_name = stripped.split('(')[0].strip()
+            if method_name and not any(keyword in method_name for keyword in ('if', 'for', 'while', 'when')):
+                # Untuk panggilan langsung, kita hanya tambahkan nama metode
+                external_calls.add(method_name)
+    
+    return len(external_calls)
+
 def extracted_method(file_path):
-    """Ekstrak informasi metode dari file Kotlin, termasuk ATFD_type, FANOUT_type, NOMNAMM_type, NOA_type, NIM_type, dan DIT_type."""
+    """Ekstrak informasi metode dari file Kotlin, termasuk ATFD_type, FANOUT_type, NOMNAMM_type, NOA_type, NIM_type, DIT_type, dan FANOUT_method."""
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             code = f.read()
@@ -268,6 +317,7 @@ def extracted_method(file_path):
                 "NOA_type": 0,
                 "NIM_type": 0,
                 "DIT_type": 0,
+                "FANOUT_method": 0,
                 "Error": "No class declaration found"
             }]
         
@@ -289,6 +339,7 @@ def extracted_method(file_path):
                 "NOA_type": 0,
                 "NIM_type": 0,
                 "DIT_type": 0,
+                "FANOUT_method": 0,
                 "Error": "Class has no body"
             }]
         
@@ -297,11 +348,14 @@ def extracted_method(file_path):
         
         # Hitung metrik tingkat kelas
         atfd_total = count_atfd_type(class_declaration)
-        fanout_total = count_fanout(code)
+        fanout_total = count_fanout_type(code)
         nomnamm_total = count_nomnamm_type(class_declaration)
         noa_total = count_noa_type(class_declaration)
         nim_total = count_nim_type(class_declaration)
         dit_total = count_dit_type(class_declaration)
+        
+        # Dictionary untuk menyimpan nilai FANOUT_method
+        fanout_method_values = {}
         
         for member in class_declaration.body.members:
             if isinstance(member, node.FunctionDeclaration):
@@ -312,8 +366,10 @@ def extracted_method(file_path):
                     loc_count = body_str.count('\n') + 1 if body_str else 0
                     maxnesting = manual_max_nesting(body_str) if body_str else 0
                     cc_value = count_cc_manual(body_str) if body_str else 0
+                    fanout_method = count_fanout_method(body_str) if body_str else 0
                     
                     method_function[function_name] = (cc_value, loc_count, maxnesting)
+                    fanout_method_values[function_name] = fanout_method
                 except Exception as e:
                     print(f"Error processing method {getattr(member, 'name', 'unknown')}: {str(e)}")
                     continue
@@ -336,6 +392,7 @@ def extracted_method(file_path):
                 "NOA_type": noa_total,
                 "NIM_type": nim_total,
                 "DIT_type": dit_total,
+                "FANOUT_method": fanout_method_values.get(function_name, 0),
                 "Error": ""
             })
         
@@ -353,6 +410,7 @@ def extracted_method(file_path):
             "NOA_type": noa_total,
             "NIM_type": nim_total,
             "DIT_type": dit_total,
+            "FANOUT_method": 0,
             "Error": "No functions found" if class_declaration.body.members else "Class has no members"
         }]
     
@@ -371,6 +429,7 @@ def extracted_method(file_path):
             "NOA_type": 0,
             "NIM_type": 0,
             "DIT_type": 0,
+            "FANOUT_method": 0,
             "Error": str(e)
         }]
 
