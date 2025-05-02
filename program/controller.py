@@ -86,17 +86,104 @@ def count_atfd_type(class_declaration):
     return atfd
 
 def count_fanout(class_code):
-    """Menghitung jumlah kelas lain yang digunakan oleh kelas ini (FANOUT_type)."""
-    import re
-    # Pola regex untuk mendeteksi penggunaan kelas lain (misal: 'ClassName.method()' atau 'ClassName()')
-    pattern = r'\b([A-Z][a-zA-Z0-9_]*)\b(?=\s*\.|\s*\()'
-    matches = re.findall(pattern, class_code)
-    # Filter out keyword Kotlin (seperti 'if', 'for', 'while') dan nama kelas sendiri
-    keywords = ['if', 'for', 'while', 'when', 'try', 'catch', 'else', 'this', 'super']
-    filtered = [m for m in matches if m not in keywords and not m[0].islower()]
-    # Menghapus duplikat dan mengembalikan jumlah kelas unik
-    unique_classes = set(filtered)
-    return len(unique_classes)
+    """Menghitung jumlah kelas lain yang digunakan oleh kelas ini (FANOUT_type) menggunakan AST."""
+    try:
+        parser = Parser(class_code)
+        ast = parser.parse()
+        
+        referenced_classes = set()
+        current_class_name = None
+        
+        # Find the current class name
+        if ast.declarations:
+            for decl in ast.declarations:
+                if isinstance(decl, node.ClassDeclaration):
+                    current_class_name = decl.name
+                    break
+        
+        # Process imports to find referenced classes
+        if hasattr(ast, 'imports') and ast.imports:
+            for imp in ast.imports:
+                import_str = str(imp)
+                components = import_str.split('.')
+                for comp in components:
+                    if comp and comp[0].isupper() and comp != current_class_name:
+                        referenced_classes.add(comp)
+        
+        # Process class body to find referenced classes
+        if ast.declarations:
+            for decl in ast.declarations:
+                if isinstance(decl, node.ClassDeclaration) and decl.body:
+                    # Check property types
+                    for member in decl.body.members:
+                        # Safely check PropertyDeclaration type
+                        if isinstance(member, node.PropertyDeclaration):
+                            if hasattr(member, 'type') and member.type:
+                                type_str = str(member.type)
+                                for name in [t.strip() for t in type_str.replace("<", " ").replace(">", " ").split()]:
+                                    if name and name[0].isupper() and name != current_class_name:
+                                        referenced_classes.add(name)
+                        
+                        # Check function parameters and return types
+                        if isinstance(member, node.FunctionDeclaration):
+                            if hasattr(member, 'parameters') and member.parameters:
+                                for param in member.parameters:
+                                    if hasattr(param, 'type') and param.type:
+                                        type_str = str(param.type)
+                                        for name in [t.strip() for t in type_str.replace("<", " ").replace(">", " ").split()]:
+                                            if name and name[0].isupper() and name != current_class_name:
+                                                referenced_classes.add(name)
+                            
+                            if hasattr(member, 'returnType') and member.returnType:
+                                type_str = str(member.returnType)
+                                for name in [t.strip() for t in type_str.replace("<", " ").replace(">", " ").split()]:
+                                    if name and name[0].isupper() and name != current_class_name:
+                                        referenced_classes.add(name)
+        
+        # Filter out common Kotlin types
+        kotlin_types = {'String', 'Int', 'Double', 'Float', 'Boolean', 'Array',
+                      'List', 'Set', 'Map', 'Collection', 'Pair', 'Triple', 'Unit', 
+                      'Any', 'Nothing', 'Throwable', 'Exception'}
+        
+        referenced_classes = {cls for cls in referenced_classes if cls not in kotlin_types}
+        
+        return len(referenced_classes)
+    
+    except Exception as e:
+        print(f"Error in count_fanout: {str(e)}")
+        return 0
+
+def count_nomnamm_type(class_declaration):
+    """Menghitung jumlah metode yang bukan accessor atau mutator (NOMNAMM_type)."""
+    if not hasattr(class_declaration, 'body') or class_declaration.body is None:
+        return 0
+    
+    nomnamm_count = 0
+    
+    for member in class_declaration.body.members:
+        if isinstance(member, node.FunctionDeclaration):
+            function_name = member.name
+            
+            # Skip constructor
+            if function_name == class_declaration.name:
+                continue
+                
+            # Check if it's an accessor (getter) or mutator (setter)
+            is_accessor_or_mutator = False
+            
+            # Accessor typically starts with 'get' or has no prefix but returns a class property
+            if function_name.startswith('get') or function_name.startswith('is'):
+                is_accessor_or_mutator = True
+            
+            # Mutator typically starts with 'set' and changes a class property
+            elif function_name.startswith('set'):
+                is_accessor_or_mutator = True
+            
+            # If not identified as accessor/mutator, count it
+            if not is_accessor_or_mutator:
+                nomnamm_count += 1
+    
+    return nomnamm_count
 
 def count_noa_type(class_declaration):
     """Menghitung jumlah atribut dalam sebuah kelas (NOA_type)."""
@@ -121,20 +208,21 @@ def extracted_method(file_path):
         package_name = result.package.name if result.package else "Unknown"
 
         if not result.declarations:
-            return [{"Package": package_name, "Class": "Unknown", "Method": "None", "LOC": 0, "Max Nesting": 0, "CC": 0, "WOC": 0, "ATFD_type": 0, "FANOUT_type": 0, "NOA_type": 0, "Error": "No class declaration found"}]
+            return [{"Package": package_name, "Class": "Unknown", "Method": "None", "LOC": 0, "Max Nesting": 0, "CC": 0, "WOC": 0, "ATFD_type": 0, "FANOUT_type": 0, "NOMNAMM_type": 0, "NOA_type": 0, "Error": "No class declaration found"}]
         
         class_declaration = result.declarations[0]
         class_name = class_declaration.name
         
         if class_declaration.body is None:
-            return [{"Package": package_name, "Class": class_name, "Method": "None", "LOC": 0, "Max Nesting": 0, "CC": 0, "WOC": 0, "ATFD_type": 0, "FANOUT_type": 0, "NOA_type": 0, "Error": "Class has no body"}]
+            return [{"Package": package_name, "Class": class_name, "Method": "None", "LOC": 0, "Max Nesting": 0, "CC": 0, "WOC": 0, "ATFD_type": 0, "FANOUT_type": 0, "NOMNAMM_type": 0, "NOA_type": 0, "Error": "Class has no body"}]
         
         datas = []
         method_function = {}
         
         # Hitung metrik tingkat kelas sekali saja
-        atfd_total = count_atfd_type(class_declaration)  # Pindahkan ke sini
+        atfd_total = count_atfd_type(class_declaration)
         fanout_total = count_fanout(code)
+        nomnamm_total = count_nomnamm_type(class_declaration)  # Calculate NOMNAMM_type
         noa_total = count_noa_type(class_declaration)
         
         for member in class_declaration.body.members:
@@ -164,8 +252,9 @@ def extracted_method(file_path):
                 "Max Nesting": maxnesting,
                 "CC": cc_value,
                 "WOC": woc,
-                "ATFD_type": atfd_total,  # Gunakan nilai yang sudah dihitung
+                "ATFD_type": atfd_total,
                 "FANOUT_type": fanout_total,
+                "NOMNAMM_type": nomnamm_total,  # Add to output
                 "NOA_type": noa_total,
                 "Error": ""
             })
@@ -180,6 +269,7 @@ def extracted_method(file_path):
             "WOC": 0,
             "ATFD_type": atfd_total,
             "FANOUT_type": fanout_total,
+            "NOMNAMM_type": nomnamm_total,  # Add to empty output
             "NOA_type": noa_total,
             "Error": "No functions found" if class_declaration.body.members else "Class has no members"
         }]
@@ -195,6 +285,7 @@ def extracted_method(file_path):
             "WOC": 0,
             "ATFD_type": 0,
             "FANOUT_type": 0,
+            "NOMNAMM_type": 0,  # Add to error output
             "NOA_type": 0,
             "Error": str(e)
         }]

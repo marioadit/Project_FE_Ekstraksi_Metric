@@ -1,1 +1,4 @@
-ATFD_type
+ATFD_type worked
+FANNOUT_type worked
+NOMNAMM_type worked
+NOA_Type worked
