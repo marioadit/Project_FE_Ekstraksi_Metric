@@ -47,8 +47,7 @@ def count_woc(cc_values):
 
 def count_atfd_type(class_declaration):
     """
-    Menghitung ATFD_type (Access to Foreign Data) untuk sebuah kelas Kotlin.
-    Versi yang lebih robust dengan penanganan error.
+    Improved ATFD_type (Access to Foreign Data) for a Kotlin class.
     """
     atfd = 0
     try:
@@ -58,32 +57,47 @@ def count_atfd_type(class_declaration):
         class_name = class_declaration.name
         for member in class_declaration.body.members:
             if isinstance(member, node.FunctionDeclaration) and member.body:
-                body_str = str(member.body) if member.body else ""
+                body_str = str(member.body)
                 if not body_str:
                     continue
-                
-                # Deteksi akses ke atribut kelas lain dengan pendekatan yang lebih aman
+
+                # Step 1: Collect parameters
+                param_names = set()
+                if hasattr(member, 'parameters'):
+                    for param in member.parameters:
+                        if hasattr(param, 'name'):
+                            param_names.add(param.name)
+
+                # Step 2: Find potential foreign accesses
                 lines = body_str.split('\n')
                 for line in lines:
                     stripped = line.strip()
-                    if not stripped:
+                    if not stripped or '.' not in stripped:
                         continue
-                    
-                    # Deteksi pola: identifier.identifier (tapi bukan this. atau super.)
-                    if '.' in stripped and not stripped.startswith(('this.', 'super.')):
-                        parts = stripped.split('.')
-                        if len(parts) > 1:
-                            receiver = parts[0].strip()
-                            # Pastikan receiver adalah identifier valid dan bukan kelas sendiri
-                            if (receiver and receiver[0].islower() and 
-                                receiver != class_name and
-                                not any(c in receiver for c in '(){}[]')):
-                                atfd += 1
+
+                    parts = stripped.split('.')
+                    for i in range(len(parts) - 1):
+                        receiver = parts[i].strip()
+                        accessed = parts[i + 1].strip()
+
+                        # Filter out method calls (like obj.method())
+                        if accessed.endswith('()') or '(' in accessed:
+                            continue
+
+                        # Valid receiver: not 'this', 'super', class name, or parameter
+                        if (receiver and receiver[0].islower() and 
+                            receiver not in ('this', 'super') and
+                            receiver != class_name and
+                            receiver not in param_names and
+                            not any(c in receiver for c in '(){}[]')):
+
+                            atfd += 1
     except Exception as e:
         print(f"Error in count_atfd_type: {str(e)}")
         return 0
     
     return atfd
+
 
 def count_fanout_type(class_code):
     """Menghitung jumlah kelas lain yang digunakan oleh kelas ini (FANOUT_type) menggunakan AST."""
@@ -346,7 +360,7 @@ def count_cfnamm_method(class_declaration):
     return coupled_count / total_non_acc_mut if total_non_acc_mut > 0 else 0
 
 def extracted_method(file_path):
-    """Ekstrak informasi metode dari file Kotlin, termasuk ATFD_type, FANOUT_type, NOMNAMM_type, NOA_type, NIM_type, DIT_type, FANOUT_method, dan CFNAMM_method."""
+    """Ekstrak informasi metode dari file Kotlin, termasuk ATFD_type, FANOUT_type, NOMNAMM_type, NOA_type, NIM_type, DIT_type, dan FANOUT_method."""
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             code = f.read()
