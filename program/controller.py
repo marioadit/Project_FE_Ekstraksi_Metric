@@ -182,35 +182,51 @@ def count_fanout_type(class_declaration: node.ClassDeclaration) -> int:
     return len(referenced_classes - kotlin_builtins)
 
 def count_nomnamm_type(class_declaration):
-    """Menghitung jumlah metode yang bukan accessor atau mutator (NOMNAMM_type)."""
+    """
+    Menghitung jumlah metode yang bukan accessor/mutator (NOMNAMM_type).
+    Lebih akurat dengan memfilter berdasarkan body method yang hanya mengakses properti.
+    """
     if not hasattr(class_declaration, 'body') or class_declaration.body is None:
         return 0
     
     nomnamm_count = 0
-    
+
+    class_properties = set()
+
+    # Ambil semua nama property untuk deteksi akses di getter/setter
+    for member in class_declaration.body.members:
+        if isinstance(member, node.PropertyDeclaration):
+            decl = getattr(member, 'declaration', None)
+            if isinstance(decl, node.VariableDeclaration):
+                class_properties.add(decl.name)
+            elif isinstance(decl, node.MultiVariableDeclaration):
+                for var in decl.sequence:
+                    class_properties.add(var.name)
+
     for member in class_declaration.body.members:
         if isinstance(member, node.FunctionDeclaration):
             function_name = member.name
-            
-            # Skip constructor
+            body = str(member.body) if member.body else ""
+
+            # Skip constructor (same name as class)
             if function_name == class_declaration.name:
                 continue
-                
-            # Check if it's an accessor (getter) or mutator (setter)
-            is_accessor_or_mutator = False
-            
-            # Accessor typically starts with 'get' or has no prefix but returns a class property
-            if function_name.startswith('get') or function_name.startswith('is'):
-                is_accessor_or_mutator = True
-            
-            # Mutator typically starts with 'set' and changes a class property
-            elif function_name.startswith('set'):
-                is_accessor_or_mutator = True
-            
-            # If not identified as accessor/mutator, count it
-            if not is_accessor_or_mutator:
+
+            # Strip whitespace and remove line breaks
+            clean_body = body.replace("\n", "").strip()
+
+            # Possible accessor/mutator detection
+            is_accessor = (
+                function_name.startswith("get") or function_name.startswith("is")
+            ) and any(prop in clean_body for prop in class_properties)
+
+            is_mutator = (
+                function_name.startswith("set") and any(f"{prop} =" in clean_body for prop in class_properties)
+            )
+
+            if not (is_accessor or is_mutator):
                 nomnamm_count += 1
-    
+
     return nomnamm_count
 
 def count_noa_type(class_declaration):

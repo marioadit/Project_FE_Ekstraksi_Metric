@@ -1,6 +1,6 @@
 ATFD_type cekmas
-FANNOUT_type cekmas
-NOMNAMM_type otw
+FANOUT_type cekmas
+NOMNAMM_type cekmas
 NOA_Type aman
 NIM_type aman
 DIT_type nodes and parser issue
