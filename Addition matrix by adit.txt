@@ -1,5 +1,5 @@
 ATFD_type cekmas
-FANNOUT_type otw
+FANNOUT_type cekmas
 NOMNAMM_type otw
 NOA_Type aman
 NIM_type aman

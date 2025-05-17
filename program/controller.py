@@ -99,73 +99,87 @@ def count_atfd_type(class_declaration):
     return atfd
 
 
-def count_fanout_type(class_code):
-    """Menghitung jumlah kelas lain yang digunakan oleh kelas ini (FANOUT_type) menggunakan AST."""
-    try:
-        parser = Parser(class_code)
-        ast = parser.parse()
-        
-        referenced_classes = set()
-        current_class_name = None
-        
-        # Find the current class name
-        if ast.declarations:
-            for decl in ast.declarations:
-                if isinstance(decl, node.ClassDeclaration):
-                    current_class_name = decl.name
-                    break
-        
-        # Process imports to find referenced classes
-        if hasattr(ast, 'imports') and ast.imports:
-            for imp in ast.imports:
-                import_str = str(imp)
-                components = import_str.split('.')
-                for comp in components:
-                    if comp and comp[0].isupper() and comp != current_class_name:
-                        referenced_classes.add(comp)
-        
-        # Process class body to find referenced classes
-        if ast.declarations:
-            for decl in ast.declarations:
-                if isinstance(decl, node.ClassDeclaration) and decl.body:
-                    # Check property types
-                    for member in decl.body.members:
-                        # Safely check PropertyDeclaration type
-                        if isinstance(member, node.PropertyDeclaration):
-                            if hasattr(member, 'type') and member.type:
-                                type_str = str(member.type)
-                                for name in [t.strip() for t in type_str.replace("<", " ").replace(">", " ").split()]:
-                                    if name and name[0].isupper() and name != current_class_name:
-                                        referenced_classes.add(name)
-                        
-                        # Check function parameters and return types
-                        if isinstance(member, node.FunctionDeclaration):
-                            if hasattr(member, 'parameters') and member.parameters:
-                                for param in member.parameters:
-                                    if hasattr(param, 'type') and param.type:
-                                        type_str = str(param.type)
-                                        for name in [t.strip() for t in type_str.replace("<", " ").replace(">", " ").split()]:
-                                            if name and name[0].isupper() and name != current_class_name:
-                                                referenced_classes.add(name)
-                            
-                            if hasattr(member, 'returnType') and member.returnType:
-                                type_str = str(member.returnType)
-                                for name in [t.strip() for t in type_str.replace("<", " ").replace(">", " ").split()]:
-                                    if name and name[0].isupper() and name != current_class_name:
-                                        referenced_classes.add(name)
-        
-        # Filter out common Kotlin types
-        kotlin_types = {'String', 'Int', 'Double', 'Float', 'Boolean', 'Array',
-                      'List', 'Set', 'Map', 'Collection', 'Pair', 'Triple', 'Unit', 
-                      'Any', 'Nothing', 'Throwable', 'Exception'}
-        
-        referenced_classes = {cls for cls in referenced_classes if cls not in kotlin_types}
-        
-        return len(referenced_classes)
-    
-    except Exception as e:
-        print(f"Error in count_fanout: {str(e)}")
+def count_fanout_type(class_declaration: node.ClassDeclaration) -> int:
+    """
+    Count the number of unique external classes used by this class (FANOUT_type).
+    """
+    if not class_declaration or class_declaration.body is None:
         return 0
+
+    current_class_name = class_declaration.name
+    referenced_classes = set()
+
+    # Helper to extract type names recursively
+    def extract_type_names(type_node):
+        names = set()
+        if type_node is None:
+            return names
+        try:
+            type_str = str(type_node)
+            raw = type_str.replace("<", " ").replace(">", " ").replace(",", " ")
+            for part in raw.split():
+                if part[0].isupper() and part != current_class_name:
+                    names.add(part)
+        except Exception:
+            pass
+        return names
+
+    # Check supertypes (inheritance or interface)
+    if hasattr(class_declaration, 'supertypes'):
+        for supertype in class_declaration.supertypes:
+            referenced_classes |= extract_type_names(supertype)
+
+    # Check type parameters constraints
+    if hasattr(class_declaration, 'constraints'):
+        for constraint in class_declaration.constraints:
+            referenced_classes |= extract_type_names(constraint.type)
+
+    # Check inside body
+    for member in class_declaration.body.members:
+        if isinstance(member, node.PropertyDeclaration):
+            decl = getattr(member, 'declaration', None)
+            if isinstance(decl, node.VariableDeclaration) and decl.type:
+                referenced_classes |= extract_type_names(decl.type)
+            elif isinstance(decl, node.MultiVariableDeclaration):
+                for var in decl.sequence:
+                    if var.type:
+                        referenced_classes |= extract_type_names(var.type)
+
+            # Delegate
+            if member.delegate:
+                referenced_classes |= extract_type_names(member.delegate.value)
+
+        elif isinstance(member, node.FunctionDeclaration):
+            if member.type:
+                referenced_classes |= extract_type_names(member.type)  # return type
+            for param in getattr(member, 'parameters', []):
+                if param.type:
+                    referenced_classes |= extract_type_names(param.type)
+
+        elif isinstance(member, node.SecondaryConstructor):
+            for param in member.parameters:
+                if param.type:
+                    referenced_classes |= extract_type_names(param.type)
+
+        elif isinstance(member, node.CompanionObject) and member.body:
+            for inner_member in member.body.members:
+                if isinstance(inner_member, node.PropertyDeclaration):
+                    decl = getattr(inner_member, 'declaration', None)
+                    if isinstance(decl, node.VariableDeclaration) and decl.type:
+                        referenced_classes |= extract_type_names(decl.type)
+                    elif isinstance(decl, node.MultiVariableDeclaration):
+                        for var in decl.sequence:
+                            if var.type:
+                                referenced_classes |= extract_type_names(var.type)
+
+    # Remove Kotlin built-ins
+    kotlin_builtins = {
+        'String', 'Int', 'Double', 'Float', 'Boolean', 'Array', 'List', 'Set',
+        'Map', 'Collection', 'Pair', 'Triple', 'Unit', 'Any', 'Nothing', 'Exception',
+        'Throwable', 'Char', 'Long', 'Short', 'Byte'
+    }
+
+    return len(referenced_classes - kotlin_builtins)
 
 def count_nomnamm_type(class_declaration):
     """Menghitung jumlah metode yang bukan accessor atau mutator (NOMNAMM_type)."""
@@ -360,7 +374,7 @@ def count_cfnamm_method(class_declaration):
     return coupled_count / total_non_acc_mut if total_non_acc_mut > 0 else 0
 
 def extracted_method(file_path):
-    """Ekstrak informasi metode dari file Kotlin, termasuk ATFD_type, FANOUT_type, NOMNAMM_type, NOA_type, NIM_type, DIT_type, dan FANOUT_method."""
+    """Ekstrak informasi metode dari file Kotlin dengan metrik lengkap."""
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             code = f.read()
@@ -415,18 +429,17 @@ def extracted_method(file_path):
         datas = []
         method_function = {}
         
-        # Hitung metrik tingkat kelas
+        # ✅ Fixed: Use refined class-based FANOUT_type
         atfd_total = count_atfd_type(class_declaration)
-        fanout_total = count_fanout_type(code)
+        fanout_total = count_fanout_type(class_declaration)
         nomnamm_total = count_nomnamm_type(class_declaration)
         noa_total = count_noa_type(class_declaration)
         nim_total = count_nim_type(class_declaration)
         dit_total = count_dit_type(class_declaration)
         cfnamm_total = count_cfnamm_method(class_declaration)
         
-        # Dictionary untuk menyimpan nilai FANOUT_method
         fanout_method_values = {}
-        
+
         for member in class_declaration.body.members:
             if isinstance(member, node.FunctionDeclaration):
                 try:
@@ -457,7 +470,7 @@ def extracted_method(file_path):
                 "CC": cc_value,
                 "WOC": woc,
                 "ATFD_type": atfd_total,
-                "FANOUT_type": fanout_total,
+                "FANOUT_type": fanout_total,  # <- now from class node!
                 "NOMNAMM_type": nomnamm_total,
                 "NOA_type": noa_total,
                 "NIM_type": nim_total,
@@ -466,7 +479,7 @@ def extracted_method(file_path):
                 "CFNAMM_method": cfnamm_total,
                 "Error": ""
             })
-        
+
         return datas if datas else [{
             "Package": package_name,
             "Class": class_name,
