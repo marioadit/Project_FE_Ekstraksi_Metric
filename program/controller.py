@@ -333,56 +333,54 @@ def count_fanout_method(method_body: str, class_methods=None) -> int:
 
 def count_cfnamm_method(class_declaration):
     """
-    Menghitung CFNAMM_method (Coupling Factor of Non-Accessor and Mutator Methods) untuk sebuah kelas.
-    CFNAMM_method = (Number of Non-Accessor/Mutator Methods Coupled) / (Total Non-Accessor/Mutator Methods)
+    Refined CFNAMM_method using Kopyt nodes (no regex).
     """
     if not hasattr(class_declaration, 'body') or class_declaration.body is None:
         return 0
-    
-    # Identifikasi semua metode non-accessor/non-mutator
-    non_acc_mut_methods = []
-    coupled_methods = set()
-    
+
+    non_accessor_mutator_methods = {}
+
+    # Step 1: Identify all non-accessor/mutator methods
     for member in class_declaration.body.members:
         if isinstance(member, node.FunctionDeclaration):
-            function_name = member.name
-            
+            name = member.name
+
             # Skip constructor
-            if function_name == class_declaration.name:
+            if name == class_declaration.name:
                 continue
-                
-            # Check if it's an accessor (getter) or mutator (setter)
-            is_accessor_or_mutator = False
-            
-            # Accessor typically starts with 'get' or has no prefix but returns a class property
-            if function_name.startswith('get') or function_name.startswith('is'):
-                is_accessor_or_mutator = True
-            
-            # Mutator typically starts with 'set' and changes a class property
-            elif function_name.startswith('set'):
-                is_accessor_or_mutator = True
-            
-            # Store non-accessor/mutator methods for analysis
-            if not is_accessor_or_mutator:
-                body_str = str(member.body) if member.body else ""
-                non_acc_mut_methods.append((function_name, body_str))
-    
-    # If there are no non-accessor/mutator methods, return 0
-    total_non_acc_mut = len(non_acc_mut_methods)
-    if total_non_acc_mut == 0:
+
+            # Skip getter/setter style
+            if name.startswith("get") or name.startswith("set") or name.startswith("is"):
+                continue
+
+            body_str = str(member.body) if member.body else ""
+            non_accessor_mutator_methods[name] = body_str
+
+    total = len(non_accessor_mutator_methods)
+    if total == 0:
         return 0
-    
-    # Check coupling between methods
-    for method_name, body_str in non_acc_mut_methods:
-        # A method is coupled if it calls another method in the class
-        for other_method_name, _ in non_acc_mut_methods:
-            if method_name != other_method_name and other_method_name in body_str:
-                coupled_methods.add(method_name)
-                break
-    
-    # Calculate CFNAMM_method
-    coupled_count = len(coupled_methods)
-    return coupled_count / total_non_acc_mut if total_non_acc_mut > 0 else 0
+
+    # Step 2: Check for coupling (calls to other non-acc/mut methods)
+    coupled = set()
+
+    method_names = set(non_accessor_mutator_methods.keys())
+    for method_name, body in non_accessor_mutator_methods.items():
+        for target in method_names:
+            if method_name == target:
+                continue
+            # Manual string-based check without regex
+            index = 0
+            while True:
+                index = body.find(target, index)
+                if index == -1:
+                    break
+                after = body[index + len(target):]
+                if after.lstrip().startswith("("):
+                    coupled.add(method_name)
+                    break
+                index += len(target)
+
+    return len(coupled) / total
 
 def extracted_method(file_path):
     """Ekstrak informasi metode dari file Kotlin dengan metrik lengkap (refined FANOUT_method)."""

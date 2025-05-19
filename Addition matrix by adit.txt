@@ -5,5 +5,5 @@ NOA_Type aman
 NIM_type aman
 DIT_type nodes and parser issue
 FANOUT_method cekmas
-CFNAMM_method otw
+CFNAMM_method cekmas
 ATLD_method
