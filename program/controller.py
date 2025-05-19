@@ -287,53 +287,48 @@ def count_dit_type(class_declaration):
     
     return dit
 
-def count_fanout_method(method_body):
+def count_fanout_method(method_body: str, class_methods=None) -> int:
     """
-    Menghitung FANOUT_method - jumlah kelas atau fungsi berbeda yang dipanggil dalam suatu metode.
-    
+    Refined FANOUT_method metric:
+    Count unique external class or method calls from a method body.
+
     Args:
-        method_body (str): Kode metode yang akan dianalisis
-    
+        method_body (str): Method code as string.
+        class_methods (set): Optional, names of own class methods to exclude from count.
+
     Returns:
-        int: Jumlah panggilan unik ke metode/kelas eksternal
+        int: Number of unique external class or method calls.
     """
     if not method_body:
         return 0
-        
-    # Set untuk menyimpan panggilan unik
+
     external_calls = set()
-    
-    # Memisahkan kode menjadi baris-baris
+    class_methods = class_methods or set()
+
     lines = method_body.split('\n')
-    
+
     for line in lines:
-        stripped = line.strip()
-        
-        # Lewati baris kosong dan komentar
-        if not stripped or stripped.startswith('//') or stripped.startswith('/*'):
+        line = line.strip()
+
+        if not line or line.startswith('//') or line.startswith('/*'):
             continue
-            
-        # Deteksi panggilan metode
-        # 1. Panggilan dengan format: object.method()
-        if '.' in stripped and '(' in stripped:
-            parts = stripped.split('.')
-            for i in range(len(parts) - 1):
-                if '(' in parts[i+1]:
-                    receiver = parts[i].strip().split(' ')[-1]  # ambil objek yang memanggil metode
-                    method = parts[i+1].split('(')[0].strip()   # ambil nama metode yang dipanggil
-                    
-                    # Tidak menghitung this/super
-                    if receiver not in ('this', 'super'):
-                        # Tambah ke set panggilan eksternal
-                        external_calls.add(f"{receiver}.{method}")
-        
-        # 2. Panggilan langsung: method()
-        elif '(' in stripped and not stripped.startswith(('if', 'for', 'while', 'when', 'switch')):
-            method_name = stripped.split('(')[0].strip()
-            if method_name and not any(keyword in method_name for keyword in ('if', 'for', 'while', 'when')):
-                # Untuk panggilan langsung, kita hanya tambahkan nama metode
-                external_calls.add(method_name)
-    
+
+        # Case 1: object.method() or safe-call obj?.method()
+        if '.' in line and '(' in line:
+            segments = line.replace('?.', '.').split('.')
+            for i in range(len(segments) - 1):
+                receiver = segments[i].strip().split(' ')[-1]
+                method_part = segments[i + 1].split('(')[0].strip()
+
+                if receiver not in ('this', 'super', ''):
+                    external_calls.add(f"{receiver}.{method_part}")
+
+        # Case 2: direct method calls (no dot)
+        elif '(' in line:
+            candidate = line.split('(')[0].strip()
+            if candidate and candidate not in class_methods:
+                external_calls.add(candidate)
+
     return len(external_calls)
 
 def count_cfnamm_method(class_declaration):
@@ -390,7 +385,7 @@ def count_cfnamm_method(class_declaration):
     return coupled_count / total_non_acc_mut if total_non_acc_mut > 0 else 0
 
 def extracted_method(file_path):
-    """Ekstrak informasi metode dari file Kotlin dengan metrik lengkap."""
+    """Ekstrak informasi metode dari file Kotlin dengan metrik lengkap (refined FANOUT_method)."""
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             code = f.read()
@@ -444,8 +439,7 @@ def extracted_method(file_path):
         
         datas = []
         method_function = {}
-        
-        # ✅ Fixed: Use refined class-based FANOUT_type
+
         atfd_total = count_atfd_type(class_declaration)
         fanout_total = count_fanout_type(class_declaration)
         nomnamm_total = count_nomnamm_type(class_declaration)
@@ -453,7 +447,13 @@ def extracted_method(file_path):
         nim_total = count_nim_type(class_declaration)
         dit_total = count_dit_type(class_declaration)
         cfnamm_total = count_cfnamm_method(class_declaration)
-        
+
+        # ✅ Collect own method names to exclude self-calls in FANOUT_method
+        own_methods = {
+            m.name for m in class_declaration.body.members
+            if isinstance(m, node.FunctionDeclaration)
+        }
+
         fanout_method_values = {}
 
         for member in class_declaration.body.members:
@@ -465,7 +465,7 @@ def extracted_method(file_path):
                     loc_count = body_str.count('\n') + 1 if body_str else 0
                     maxnesting = manual_max_nesting(body_str) if body_str else 0
                     cc_value = count_cc_manual(body_str) if body_str else 0
-                    fanout_method = count_fanout_method(body_str) if body_str else 0
+                    fanout_method = count_fanout_method(body_str, class_methods=own_methods) if body_str else 0
                     
                     method_function[function_name] = (cc_value, loc_count, maxnesting)
                     fanout_method_values[function_name] = fanout_method
@@ -486,7 +486,7 @@ def extracted_method(file_path):
                 "CC": cc_value,
                 "WOC": woc,
                 "ATFD_type": atfd_total,
-                "FANOUT_type": fanout_total,  # <- now from class node!
+                "FANOUT_type": fanout_total,
                 "NOMNAMM_type": nomnamm_total,
                 "NOA_type": noa_total,
                 "NIM_type": nim_total,
