@@ -130,8 +130,53 @@ def count_nim_type(class_declaration):
     
     return nim_count
 
+def count_atfd_type(class_declaration):
+    """
+    Menghitung Access to Foreign Data (ATFD_type).
+    Metrik ini menghitung akses yang dimiliki suatu kelas terhadap atribut data kelas lain.
+    """
+    if not hasattr(class_declaration, 'body') or class_declaration.body is None:
+        return 0
+    
+    atfd_count = 0
+    
+    # Get all class properties to exclude self-access
+    class_properties = set()
+    for member in class_declaration.body.members:
+        if isinstance(member, node.PropertyDeclaration):
+            decl = getattr(member, 'declaration', None)
+            if isinstance(decl, node.VariableDeclaration):
+                class_properties.add(decl.name)
+            elif isinstance(decl, node.MultiVariableDeclaration):
+                for var in decl.sequence:
+                    class_properties.add(var.name)
+    
+    # Analyze each method for foreign data access
+    for member in class_declaration.body.members:
+        if isinstance(member, node.FunctionDeclaration):
+            body_str = str(member.body) if member.body else ""
+            
+            # Look for patterns that indicate foreign data access
+            # Pattern: object.property or object.method().property
+            import re
+            
+            # Find dot notation access patterns
+            dot_access_patterns = re.findall(r'(\w+)\.(\w+)', body_str)
+            
+            for obj_name, property_name in dot_access_patterns:
+                # Skip if it's accessing own properties
+                if property_name not in class_properties:
+                    # Skip common method calls that are not data access
+                    if not property_name.startswith(('get', 'set', 'is', 'to', 'equals', 'hashCode', 'toString')):
+                        # Skip if it's a method call (has parentheses after)
+                        if f"{obj_name}.{property_name}(" not in body_str:
+                            atfd_count += 1
+    
+    return atfd_count
+
+
 def extracted_method(file_path):
-    """Ekstrak informasi metode dari file Kotlin dengan metrik lengkap (refined FANOUT_method)."""
+    """Ekstrak informasi metode dari file Kotlin dengan metrik lengkap termasuk ATFD_type."""
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             code = f.read()
@@ -152,6 +197,7 @@ def extracted_method(file_path):
                 "NOMNAMM_type": 0, 
                 "NOA_type": 0,
                 "NIM_type": 0,
+                "ATFD_type": 0,
                 "Error": "No class declaration found"
             }]
         
@@ -170,6 +216,7 @@ def extracted_method(file_path):
                 "NOMNAMM_type": 0, 
                 "NOA_type": 0,
                 "NIM_type": 0,
+                "ATFD_type": 0,
                 "Error": "Class has no body"
             }]
         
@@ -179,6 +226,7 @@ def extracted_method(file_path):
         nomnamm_total = count_nomnamm_type(class_declaration)
         noa_total = count_noa_type(class_declaration)
         nim_total = count_nim_type(class_declaration)
+        atfd_total = count_atfd_type(class_declaration)
 
         for member in class_declaration.body.members:
             if isinstance(member, node.FunctionDeclaration):
@@ -210,6 +258,7 @@ def extracted_method(file_path):
                 "NOMNAMM_type": nomnamm_total,
                 "NOA_type": noa_total,
                 "NIM_type": nim_total,
+                "ATFD_type": atfd_total,
                 "Error": ""
             })
 
@@ -224,6 +273,7 @@ def extracted_method(file_path):
             "NOMNAMM_type": nomnamm_total,
             "NOA_type": noa_total,
             "NIM_type": nim_total,
+            "ATFD_type": atfd_total,
             "Error": "No functions found" if class_declaration.body.members else "Class has no members"
         }]
     
@@ -239,6 +289,7 @@ def extracted_method(file_path):
             "NOMNAMM_type": 0,
             "NOA_type": 0,
             "NIM_type": 0,
+            "ATFD_type": 0,
             "Error": str(e)
         }]
 

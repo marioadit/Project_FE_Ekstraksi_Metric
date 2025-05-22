@@ -1,9 +1,9 @@
-ATFD_type cekmas
-FANOUT_type cekmas
+ATFD_type sementara
+FANOUT_type -
 NOMNAMM_type aman
 NOA_Type aman
 NIM_type aman
 DIT_type nodes and parser issue
-FANOUT_method cekmas
-CFNAMM_method cekmas
-ATLD_method
+FANOUT_method -
+CFNAMM_method -
+ATLD_method -
