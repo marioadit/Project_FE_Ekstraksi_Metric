@@ -131,52 +131,102 @@ def count_nim_type(class_declaration):
     return nim_count
 
 def count_atfd_type(class_declaration):
-    """
-    Menghitung Access to Foreign Data (ATFD_type).
-    Metrik ini menghitung akses yang dimiliki suatu kelas terhadap atribut data kelas lain.
-    """
-    if not hasattr(class_declaration, 'body') or class_declaration.body is None:
-        return 0
-    
-    atfd_count = 0
-    
-    # Get all class properties to exclude self-access
-    class_properties = set()
-    for member in class_declaration.body.members:
-        if isinstance(member, node.PropertyDeclaration):
-            decl = getattr(member, 'declaration', None)
-            if isinstance(decl, node.VariableDeclaration):
-                class_properties.add(decl.name)
-            elif isinstance(decl, node.MultiVariableDeclaration):
-                for var in decl.sequence:
-                    class_properties.add(var.name)
-    
-    # Analyze each method for foreign data access
+    foreign_accesses = set()
+
+    # Collect current class field names
+    current_fields = {
+        member.declaration.name
+        for member in class_declaration.body.members
+        if isinstance(member, node.PropertyDeclaration)
+    }
+
+    def collect_foreign_accesses(expr):
+        if isinstance(expr, node.PostfixUnaryExpression):
+            if isinstance(expr.expression, node.Identifier):
+                root_name = expr.expression.value
+                if root_name not in current_fields and root_name != "this":
+                    foreign_accesses.add(root_name)
+
+            for suffix in expr.suffixes:
+                if isinstance(suffix, node.NavigationSuffix):
+                    if isinstance(expr.expression, node.Identifier):
+                        base = expr.expression.value
+                        if base not in current_fields and base != "this":
+                            foreign_accesses.add(base)
+
+        elif isinstance(expr, node.Assignment):
+            collect_foreign_accesses(expr.value)
+
+        elif isinstance(expr, node.Identifier):
+            if expr.value not in current_fields and expr.value != "this":
+                foreign_accesses.add(expr.value)
+
+        elif hasattr(expr, "__dict__"):
+            for val in vars(expr).values():
+                if isinstance(val, node.Node):
+                    collect_foreign_accesses(val)
+                elif isinstance(val, (list, tuple)):
+                    for item in val:
+                        if isinstance(item, node.Node):
+                            collect_foreign_accesses(item)
+
+    # Visit all methods in the class
     for member in class_declaration.body.members:
         if isinstance(member, node.FunctionDeclaration):
-            body_str = str(member.body) if member.body else ""
-            
-            # Look for patterns that indicate foreign data access
-            # Pattern: object.property or object.method().property
-            import re
-            
-            # Find dot notation access patterns
-            dot_access_patterns = re.findall(r'(\w+)\.(\w+)', body_str)
-            
-            for obj_name, property_name in dot_access_patterns:
-                # Skip if it's accessing own properties
-                if property_name not in class_properties:
-                    # Skip common method calls that are not data access
-                    if not property_name.startswith(('get', 'set', 'is', 'to', 'equals', 'hashCode', 'toString')):
-                        # Skip if it's a method call (has parentheses after)
-                        if f"{obj_name}.{property_name}(" not in body_str:
-                            atfd_count += 1
-    
-    return atfd_count
+            body = member.body
+            if isinstance(body, node.Block):
+                for stmt in body.sequence:
+                    collect_foreign_accesses(stmt.statement)
+
+    return len(foreign_accesses)
+
+def count_fanout_method(method_body: str, class_methods=None) -> int:
+    """
+    Refined FANOUT_method metric:
+    Count unique external class or method calls from a method body.
+
+    Args:
+        method_body (str): Method code as string.
+        class_methods (set): Optional, names of own class methods to exclude from count.
+
+    Returns:
+        int: Number of unique external class or method calls.
+    """
+    if not method_body:
+        return 0
+
+    external_calls = set()
+    class_methods = class_methods or set()
+
+    lines = method_body.split('\n')
+
+    for line in lines:
+        line = line.strip()
+
+        if not line or line.startswith('//') or line.startswith('/*'):
+            continue
+
+        # Case 1: object.method() or safe-call obj?.method()
+        if '.' in line and '(' in line:
+            segments = line.replace('?.', '.').split('.')
+            for i in range(len(segments) - 1):
+                receiver = segments[i].strip().split(' ')[-1]
+                method_part = segments[i + 1].split('(')[0].strip()
+
+                if receiver not in ('this', 'super', ''):
+                    external_calls.add(f"{receiver}.{method_part}")
+
+        # Case 2: direct method calls (no dot)
+        elif '(' in line:
+            candidate = line.split('(')[0].strip()
+            if candidate and candidate not in class_methods:
+                external_calls.add(candidate)
+
+    return len(external_calls)
 
 
 def extracted_method(file_path):
-    """Ekstrak informasi metode dari file Kotlin dengan metrik lengkap termasuk ATFD_type."""
+    """Ekstrak informasi metode dari file Kotlin dengan metrik lengkap termasuk ATFD_type dan FANOUT_method."""
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             code = f.read()
@@ -198,6 +248,7 @@ def extracted_method(file_path):
                 "NOA_type": 0,
                 "NIM_type": 0,
                 "ATFD_type": 0,
+                "FANOUT_method": 0,
                 "Error": "No class declaration found"
             }]
         
@@ -217,6 +268,7 @@ def extracted_method(file_path):
                 "NOA_type": 0,
                 "NIM_type": 0,
                 "ATFD_type": 0,
+                "FANOUT_method": 0,
                 "Error": "Class has no body"
             }]
         
@@ -237,16 +289,17 @@ def extracted_method(file_path):
                     loc_count = body_str.count('\n') + 1 if body_str else 0
                     maxnesting = manual_max_nesting(body_str) if body_str else 0
                     cc_value = count_cc_manual(body_str) if body_str else 0
+                    fanout_value = count_fanout_method(body_str) if body_str else 0
                     
-                    method_function[function_name] = (cc_value, loc_count, maxnesting)
+                    method_function[function_name] = (cc_value, loc_count, maxnesting, fanout_value)
                 except Exception as e:
                     print(f"Error processing method {getattr(member, 'name', 'unknown')}: {str(e)}")
                     continue
 
-        cc_values = [cc for cc, _, _ in method_function.values()]
+        cc_values = [cc for cc, _, _, _ in method_function.values()]
         woc_values = count_woc(cc_values)
 
-        for (function_name, (cc_value, loc_count, maxnesting)), woc in zip(method_function.items(), woc_values):
+        for (function_name, (cc_value, loc_count, maxnesting, fanout_value)), woc in zip(method_function.items(), woc_values):
             datas.append({
                 "Package": package_name,
                 "Class": class_name,
@@ -259,6 +312,7 @@ def extracted_method(file_path):
                 "NOA_type": noa_total,
                 "NIM_type": nim_total,
                 "ATFD_type": atfd_total,
+                "FANOUT_method": fanout_value,
                 "Error": ""
             })
 
@@ -274,6 +328,7 @@ def extracted_method(file_path):
             "NOA_type": noa_total,
             "NIM_type": nim_total,
             "ATFD_type": atfd_total,
+            "FANOUT_method": 0,
             "Error": "No functions found" if class_declaration.body.members else "Class has no members"
         }]
     
@@ -290,6 +345,7 @@ def extracted_method(file_path):
             "NOA_type": 0,
             "NIM_type": 0,
             "ATFD_type": 0,
+            "FANOUT_method": 0,
             "Error": str(e)
         }]
 

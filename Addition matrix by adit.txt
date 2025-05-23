@@ -4,6 +4,6 @@ NOMNAMM_type aman
 NOA_Type aman
 NIM_type aman
 DIT_type nodes and parser issue
-FANOUT_method -
+FANOUT_method sementara masislh-1
 CFNAMM_method -
 ATLD_method -
