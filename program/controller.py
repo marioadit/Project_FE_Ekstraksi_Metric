@@ -4,47 +4,6 @@ import patoolib
 import pandas as pd
 from kopyt import Parser, node  # Gunakan `kopyt` sebagai parser AST Kotlin
 
-def manual_max_nesting(body_str):
-    """ Menghitung max nesting secara manual dari string kode """
-    indent_levels = []
-    max_depth = 0
-
-    for line in body_str.split("\n"):
-        stripped = line.strip()
-        if stripped.startswith(("if", "try", "for", "catch", "else", "when")):
-            indent_levels.append(stripped)
-            max_depth = max(max_depth, len(indent_levels))
-        elif stripped == "}":
-            if indent_levels:
-                indent_levels.pop()
-    
-    return max_depth
-
-def count_cc_manual(method_code):
-    """
-    Menghitung Cyclomatic Complexity (CC) secara manual dari string kode.
-    """
-    cc = 1  # Mulai dari 1 karena setiap metode memiliki setidaknya satu jalur
-
-    # Daftar kata kunci yang menambah CC
-    control_keywords = ["if", "for", "while", "when", "catch", "case"]
-
-    # Memisahkan kode menjadi baris-baris
-    lines = method_code.split("\n")
-
-    for line in lines:
-        stripped = line.strip()
-        # Menghitung struktur kontrol
-        for keyword in control_keywords:
-            if stripped.startswith(keyword):
-                cc += 1  # Setiap struktur kontrol menambah CC
-    return cc
-
-def count_woc(cc_values):
-    """Menghitung Weighted Operations Count (WOC)."""
-    total_CC = sum(cc_values)
-    return [cc / total_CC if total_CC else 0 for cc in cc_values]
-
 def count_nomnamm_type(class_declaration):
     """
     Menghitung jumlah metode yang bukan accessor/mutator (NOMNAMM_type).
@@ -241,9 +200,6 @@ def extracted_method(file_path):
                 "Class": "Unknown", 
                 "Method": "None", 
                 "LOC": 0, 
-                "Max Nesting": 0, 
-                "CC": 0, 
-                "WOC": 0, 
                 "NOMNAMM_type": 0, 
                 "NOA_type": 0,
                 "NIM_type": 0,
@@ -261,9 +217,6 @@ def extracted_method(file_path):
                 "Class": class_name, 
                 "Method": "None", 
                 "LOC": 0, 
-                "Max Nesting": 0, 
-                "CC": 0, 
-                "WOC": 0, 
                 "NOMNAMM_type": 0, 
                 "NOA_type": 0,
                 "NIM_type": 0,
@@ -287,27 +240,19 @@ def extracted_method(file_path):
                     body_str = str(member.body) if member.body else ""
                     
                     loc_count = body_str.count('\n') + 1 if body_str else 0
-                    maxnesting = manual_max_nesting(body_str) if body_str else 0
-                    cc_value = count_cc_manual(body_str) if body_str else 0
                     fanout_value = count_fanout_method(body_str) if body_str else 0
                     
-                    method_function[function_name] = (cc_value, loc_count, maxnesting, fanout_value)
+                    method_function[function_name] = (loc_count, fanout_value)
                 except Exception as e:
                     print(f"Error processing method {getattr(member, 'name', 'unknown')}: {str(e)}")
                     continue
 
-        cc_values = [cc for cc, _, _, _ in method_function.values()]
-        woc_values = count_woc(cc_values)
-
-        for (function_name, (cc_value, loc_count, maxnesting, fanout_value)), woc in zip(method_function.items(), woc_values):
+        for function_name, (loc_count, fanout_value) in method_function.items():
             datas.append({
                 "Package": package_name,
                 "Class": class_name,
                 "Method": function_name,
                 "LOC": loc_count,
-                "Max Nesting": maxnesting,
-                "CC": cc_value,
-                "WOC": woc,
                 "NOMNAMM_type": nomnamm_total,
                 "NOA_type": noa_total,
                 "NIM_type": nim_total,
@@ -321,9 +266,6 @@ def extracted_method(file_path):
             "Class": class_name,
             "Method": "None",
             "LOC": 0,
-            "Max Nesting": 0,
-            "CC": 0,
-            "WOC": 0,
             "NOMNAMM_type": nomnamm_total,
             "NOA_type": noa_total,
             "NIM_type": nim_total,
@@ -338,9 +280,6 @@ def extracted_method(file_path):
             "Class": "Error",
             "Method": "Error",
             "LOC": 0,
-            "Max Nesting": 0,
-            "CC": 0,
-            "WOC": 0,
             "NOMNAMM_type": 0,
             "NOA_type": 0,
             "NIM_type": 0,
