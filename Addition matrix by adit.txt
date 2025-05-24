@@ -6,4 +6,4 @@ NIM_type aman
 DIT_type nodes and parser issue
 FANOUT_method sementara masislh-1
 CFNAMM_method -
-ATLD_method -
+ATLD_method seems udah, udah debug e 🥲

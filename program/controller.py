@@ -183,15 +183,53 @@ def count_fanout_method(method_body: str, class_methods=None) -> int:
 
     return len(external_calls)
 
+def count_atld_method(method_node, class_fields):
+    attributes_accessed = set()
+    local_variables = set()
+
+    # Step 1: parameters as locals
+    if hasattr(method_node, 'parameters'):
+        for param in method_node.parameters:
+            if hasattr(param, 'name'):
+                local_variables.add(param.name)
+
+    # Step 2: fallback to body text scan
+    body_text = str(method_node.body) if method_node.body else ""
+
+    # Detect class attributes used
+    for field in class_fields:
+        if field in body_text:
+            attributes_accessed.add(field)
+
+    # Detect locals by looking for `val` / `var` declarations
+    for line in body_text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("val ") or stripped.startswith("var "):
+            parts = stripped.split()
+            if len(parts) >= 2:
+                var_name = parts[1].split("=")[0].strip()
+                if var_name.isidentifier():
+                    local_variables.add(var_name)
+
+    # Final calculation
+    local_count = len(local_variables)
+    attr_count = len(attributes_accessed)
+
+    return round(attr_count / local_count, 2) if local_count > 0 else float(attr_count)
+
+
+
 
 def extracted_method(file_path):
-    """Ekstrak informasi metode dari file Kotlin dengan metrik lengkap termasuk ATFD_type dan FANOUT_method."""
+    """Ekstrak informasi metode dari file Kotlin dengan semua metrik termasuk ATLD_method."""
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             code = f.read()
         
         parser = Parser(code)
         result = parser.parse()
+        # print("Parsed members:", class_declaration.body.members)
+
         package_name = result.package.name if result.package else "Unknown"
 
         if not result.declarations:
@@ -205,6 +243,7 @@ def extracted_method(file_path):
                 "NIM_type": 0,
                 "ATFD_type": 0,
                 "FANOUT_method": 0,
+                "ATLD_method": 0,
                 "Error": "No class declaration found"
             }]
         
@@ -222,6 +261,7 @@ def extracted_method(file_path):
                 "NIM_type": 0,
                 "ATFD_type": 0,
                 "FANOUT_method": 0,
+                "ATLD_method": 0,
                 "Error": "Class has no body"
             }]
         
@@ -233,6 +273,17 @@ def extracted_method(file_path):
         nim_total = count_nim_type(class_declaration)
         atfd_total = count_atfd_type(class_declaration)
 
+        # Collect class-level attribute names
+        class_fields = set()
+        for member in class_declaration.body.members:
+            if isinstance(member, node.PropertyDeclaration):
+                decl = member.declaration
+                if isinstance(decl, node.VariableDeclaration):
+                    class_fields.add(decl.name)
+                elif isinstance(decl, node.MultiVariableDeclaration):
+                    for var in decl.sequence:
+                        class_fields.add(var.name)
+
         for member in class_declaration.body.members:
             if isinstance(member, node.FunctionDeclaration):
                 try:
@@ -241,13 +292,14 @@ def extracted_method(file_path):
                     
                     loc_count = body_str.count('\n') + 1 if body_str else 0
                     fanout_value = count_fanout_method(body_str) if body_str else 0
-                    
-                    method_function[function_name] = (loc_count, fanout_value)
+                    atld_value = count_atld_method(member, class_fields)
+
+                    method_function[function_name] = (loc_count, fanout_value, atld_value)
                 except Exception as e:
                     print(f"Error processing method {getattr(member, 'name', 'unknown')}: {str(e)}")
                     continue
 
-        for function_name, (loc_count, fanout_value) in method_function.items():
+        for function_name, (loc_count, fanout_value, atld_value) in method_function.items():
             datas.append({
                 "Package": package_name,
                 "Class": class_name,
@@ -258,6 +310,7 @@ def extracted_method(file_path):
                 "NIM_type": nim_total,
                 "ATFD_type": atfd_total,
                 "FANOUT_method": fanout_value,
+                "ATLD_method": atld_value,
                 "Error": ""
             })
 
@@ -271,6 +324,7 @@ def extracted_method(file_path):
             "NIM_type": nim_total,
             "ATFD_type": atfd_total,
             "FANOUT_method": 0,
+            "ATLD_method": 0,
             "Error": "No functions found" if class_declaration.body.members else "Class has no members"
         }]
     
@@ -285,9 +339,9 @@ def extracted_method(file_path):
             "NIM_type": 0,
             "ATFD_type": 0,
             "FANOUT_method": 0,
+            "ATLD_method": 0,
             "Error": str(e)
         }]
-
 
 def extract_and_parse(file):
     """Ekstrak arsip ZIP/RAR dan proses file Kotlin."""
