@@ -217,8 +217,65 @@ def count_atld_method(method_node, class_fields):
 
     return round(attr_count / local_count, 2) if local_count > 0 else float(attr_count)
 
+def count_cfnamm_method(class_declaration):
+    """
+    Menghitung CFNAMM_method per method: 
+    berapa banyak metode non-AM lain yang dipanggil oleh masing-masing method.
+    """
+    if not hasattr(class_declaration, 'body') or class_declaration.body is None:
+        return {}
 
+    methods = {}
+    class_properties = set()
 
+    # 1. Kumpulkan semua properti
+    for member in class_declaration.body.members:
+        if isinstance(member, node.PropertyDeclaration):
+            decl = member.declaration
+            if isinstance(decl, node.VariableDeclaration):
+                class_properties.add(decl.name)
+            elif isinstance(decl, node.MultiVariableDeclaration):
+                for var in decl.sequence:
+                    class_properties.add(var.name)
+
+    # 2. Ambil method non-AM
+    for member in class_declaration.body.members:
+        if isinstance(member, node.FunctionDeclaration):
+            function_name = member.name
+            if function_name == class_declaration.name:
+                continue
+
+            body_str = str(member.body) if member.body else ""
+            clean_body = body_str.replace('\n', '').strip()
+
+            is_accessor = (
+                function_name.startswith("get") or function_name.startswith("is")
+            ) and any(prop in clean_body for prop in class_properties)
+
+            is_mutator = (
+                function_name.startswith("set") and any(f"{prop} =" in clean_body for prop in class_properties)
+            )
+
+            if not (is_accessor or is_mutator):
+                methods[function_name] = body_str
+
+    if not methods:
+        return {}
+
+    method_names = set(methods.keys())
+    cfnamm_per_method = {}
+
+    # 3. Untuk tiap method, hitung coupling terhadap method lain
+    for method_name, body_str in methods.items():
+        calls = 0
+        for other in method_names:
+            if other != method_name and f"{other}(" in body_str:
+                calls += 1
+        max_possible = len(method_names) - 1
+        ratio = round(calls / max_possible, 2) if max_possible > 0 else 0.0
+        cfnamm_per_method[method_name] = ratio
+
+    return cfnamm_per_method
 
 def extracted_method(file_path):
     """Ekstrak informasi metode dari file Kotlin dengan semua metrik termasuk ATLD_method."""
@@ -228,7 +285,6 @@ def extracted_method(file_path):
         
         parser = Parser(code)
         result = parser.parse()
-        # print("Parsed members:", class_declaration.body.members)
 
         package_name = result.package.name if result.package else "Unknown"
 
@@ -244,6 +300,7 @@ def extracted_method(file_path):
                 "ATFD_type": 0,
                 "FANOUT_method": 0,
                 "ATLD_method": 0,
+                "CFNAMM_method": 0.0,
                 "Error": "No class declaration found"
             }]
         
@@ -262,6 +319,7 @@ def extracted_method(file_path):
                 "ATFD_type": 0,
                 "FANOUT_method": 0,
                 "ATLD_method": 0,
+                "CFNAMM_method": 0.0,
                 "Error": "Class has no body"
             }]
         
@@ -272,6 +330,7 @@ def extracted_method(file_path):
         noa_total = count_noa_type(class_declaration)
         nim_total = count_nim_type(class_declaration)
         atfd_total = count_atfd_type(class_declaration)
+        cfnamm_total = count_cfnamm_method(class_declaration)
 
         # Collect class-level attribute names
         class_fields = set()
@@ -300,6 +359,10 @@ def extracted_method(file_path):
                     continue
 
         for function_name, (loc_count, fanout_value, atld_value) in method_function.items():
+            cfnamm_value = cfnamm_total.get(function_name, 0.0)
+            if isinstance(cfnamm_value, dict):  # fallback safeguard
+                cfnamm_value = 0.0
+
             datas.append({
                 "Package": package_name,
                 "Class": class_name,
@@ -311,8 +374,15 @@ def extracted_method(file_path):
                 "ATFD_type": atfd_total,
                 "FANOUT_method": fanout_value,
                 "ATLD_method": atld_value,
+                "CFNAMM_method": float(cfnamm_value),  # 💡 enforce float
                 "Error": ""
             })
+
+            
+        for row in datas:
+            for k, v in row.items():
+                if isinstance(v, dict):
+                    row[k] = str(v)  # or set to 0.0 if numeric column
 
         return datas if datas else [{
             "Package": package_name,
@@ -325,8 +395,11 @@ def extracted_method(file_path):
             "ATFD_type": atfd_total,
             "FANOUT_method": 0,
             "ATLD_method": 0,
+            "CFNAMM_method": 0.0,  # ✅ FIXED HERE
             "Error": "No functions found" if class_declaration.body.members else "Class has no members"
         }]
+
+    
     
     except Exception as e:
         return [{
@@ -340,6 +413,7 @@ def extracted_method(file_path):
             "ATFD_type": 0,
             "FANOUT_method": 0,
             "ATLD_method": 0,
+            "CFNAMM_method": 0.0,
             "Error": str(e)
         }]
 
