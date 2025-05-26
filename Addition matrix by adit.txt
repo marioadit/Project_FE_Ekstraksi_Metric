@@ -1,5 +1,5 @@
 ATFD_type sementara
-FANOUT_type -
+FANOUT_type manual seems fine
 NOMNAMM_type aman
 NOA_Type aman
 NIM_type aman

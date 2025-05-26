@@ -139,49 +139,6 @@ def count_atfd_type(class_declaration):
 
     return len(foreign_accesses)
 
-def count_fanout_method(method_body: str, class_methods=None) -> int:
-    """
-    Refined FANOUT_method metric:
-    Count unique external class or method calls from a method body.
-
-    Args:
-        method_body (str): Method code as string.
-        class_methods (set): Optional, names of own class methods to exclude from count.
-
-    Returns:
-        int: Number of unique external class or method calls.
-    """
-    if not method_body:
-        return 0
-
-    external_calls = set()
-    class_methods = class_methods or set()
-
-    lines = method_body.split('\n')
-
-    for line in lines:
-        line = line.strip()
-
-        if not line or line.startswith('//') or line.startswith('/*'):
-            continue
-
-        # Case 1: object.method() or safe-call obj?.method()
-        if '.' in line and '(' in line:
-            segments = line.replace('?.', '.').split('.')
-            for i in range(len(segments) - 1):
-                receiver = segments[i].strip().split(' ')[-1]
-                method_part = segments[i + 1].split('(')[0].strip()
-
-                if receiver not in ('this', 'super', ''):
-                    external_calls.add(f"{receiver}.{method_part}")
-
-        # Case 2: direct method calls (no dot)
-        elif '(' in line:
-            candidate = line.split('(')[0].strip()
-            if candidate and candidate not in class_methods:
-                external_calls.add(candidate)
-
-    return len(external_calls)
 
 def count_atld_method(method_node, class_fields):
     attributes_accessed = set()
@@ -277,8 +234,197 @@ def count_cfnamm_method(class_declaration):
 
     return cfnamm_per_method
 
+def count_fanout_method(method_body: str, class_methods=None) -> int:
+    """
+    Refined FANOUT_method metric:
+    Count unique external class or method calls from a method body.
+
+    Args:
+        method_body (str): Method code as string.
+        class_methods (set): Optional, names of own class methods to exclude from count.
+
+    Returns:
+        int: Number of unique external class or method calls.
+    """
+    if not method_body:
+        return 0
+
+    external_calls = set()
+    class_methods = class_methods or set()
+
+    lines = method_body.split('\n')
+
+    for line in lines:
+        line = line.strip()
+
+        if not line or line.startswith('//') or line.startswith('/*'):
+            continue
+
+        # Case 1: object.method() or safe-call obj?.method()
+        if '.' in line and '(' in line:
+            segments = line.replace('?.', '.').split('.')
+            for i in range(len(segments) - 1):
+                receiver = segments[i].strip().split(' ')[-1]
+                method_part = segments[i + 1].split('(')[0].strip()
+
+                if receiver not in ('this', 'super', ''):
+                    external_calls.add(f"{receiver}.{method_part}")
+
+        # Case 2: direct method calls (no dot)
+        elif '(' in line:
+            candidate = line.split('(')[0].strip()
+            if candidate and candidate not in class_methods:
+                external_calls.add(candidate)
+
+    return len(external_calls)
+
+def count_fanout_type(class_declaration):
+    """
+    FANOUT_type — inspects function bodies, property types/values, parameter types, return types, and supertypes.
+    """
+    if not hasattr(class_declaration, 'body') or class_declaration.body is None:
+        print("⛔️ No class body.")
+        return 0
+
+    external_types = set()
+
+    def collect_types(n, depth=0):
+        prefix = "  " * depth
+
+        if isinstance(n, node.TypeReference):
+            print(f"{prefix}🔍 TypeReference → {n}")
+            if isinstance(n.subtype, node.UserType):
+                for segment in n.subtype.sequence:
+                    if isinstance(segment, node.SimpleUserType):
+                        name = segment.name
+                        # print(f"{prefix}  📎 Found type: {name}")
+                        if name and name[0].isupper():
+                            external_types.add(name)
+
+        elif isinstance(n, node.ConstructorInvocation):
+            print(f"{prefix}🔧 ConstructorInvocation → {n}")
+            if isinstance(n.invoker, node.UserType):
+                for segment in n.invoker.sequence:
+                    if isinstance(segment, node.SimpleUserType):
+                        name = segment.name
+                        # print(f"{prefix}  🏗 Instantiates class: {name}")
+                        if name and name[0].isupper():
+                            external_types.add(name)
+
+        elif isinstance(n, node.UserType):
+            for segment in n.sequence:
+                if isinstance(segment, node.SimpleUserType):
+                    name = segment.name
+                    # print(f"{prefix}📎 UserType segment: {name}")
+                    if name and name[0].isupper():
+                        external_types.add(name)
+
+        # Deep recursive search
+        if hasattr(n, '__dict__'):
+            for val in vars(n).values():
+                if isinstance(val, node.Node):
+                    collect_types(val, depth + 1)
+                elif isinstance(val, (list, tuple)):
+                    for item in val:
+                        if isinstance(item, node.Node):
+                            collect_types(item, depth + 1)
+
+    # Visit supertypes (inheritance/interfaces)
+    if hasattr(class_declaration, 'supertypes') and class_declaration.supertypes:
+        for supertype in class_declaration.supertypes:
+            collect_types(supertype)
+
+    # Visit class parameters (constructor properties)
+    if hasattr(class_declaration, 'constructor') and class_declaration.constructor:
+        for param in getattr(class_declaration.constructor.parameters, 'sequence', []):
+            collect_types(param.type)
+
+    for member in class_declaration.body.members:
+        # print(f"Member: {type(member).__name__}")
+
+        # Property types
+        if isinstance(member, node.PropertyDeclaration):
+            decl = getattr(member, 'declaration', None)
+            if isinstance(decl, node.VariableDeclaration):
+                if decl.type:
+                    collect_types(decl.type)
+            elif isinstance(decl, node.MultiVariableDeclaration):
+                for var in decl.sequence:
+                    if var.type:
+                        collect_types(var.type)
+            if member.value:
+                collect_types(member.value)
+
+        # Function parameter types and return type
+        elif isinstance(member, node.FunctionDeclaration):
+            if hasattr(member, 'parameters'):
+                for param in getattr(member.parameters, 'sequence', []):
+                    if hasattr(param, 'parameter') and hasattr(param.parameter, 'type') and param.parameter.type:
+                        collect_types(param.parameter.type)
+            if hasattr(member, 'type') and member.type:
+                collect_types(member.type)
+            if member.body:
+                collect_types(member.body)
+
+        else:
+            collect_types(member)
+
+    # print(f"✅ Total unique external types found: {len(external_types)}")
+    # print(f"🧾 Types: {external_types}")
+    return len(external_types)
+
+def count_fanout_type_manual(code: str) -> int:
+    """
+    FANOUT_type_manual — without regex.
+    Scans for:
+    - Type annotations (val x: Type)
+    - Constructor calls (Type(...))
+    """
+    types = set()
+
+    for line in code.splitlines():
+        line = line.strip()
+
+        if not line or line.startswith('//') or line.startswith('/*'):
+            continue
+
+        # ---- Type annotation detection ----
+        if ':' in line:
+            colon_index = line.index(':')
+            after_colon = line[colon_index + 1:].lstrip()
+
+            end = 0
+            while end < len(after_colon) and after_colon[end] not in ' =({,);':
+                end += 1
+            candidate = after_colon[:end]
+
+            if candidate and candidate[0].isupper():
+                types.add(candidate)
+
+        # ---- Constructor call detection ----
+        i = 0
+        while i < len(line):
+            if line[i].isalpha() and line[i].isupper():
+                start = i
+                while i < len(line) and (line[i].isalnum() or line[i] == '_'):
+                    i += 1
+                name = line[start:i]
+
+                # Check for immediate open paren after optional spaces
+                j = i
+                while j < len(line) and line[j] == ' ':
+                    j += 1
+                if j < len(line) and line[j] == '(':
+                    types.add(name)
+            else:
+                i += 1
+
+    return len(types)
+
+
+
 def extracted_method(file_path):
-    """Ekstrak informasi metode dari file Kotlin dengan semua metrik termasuk ATLD_method."""
+    """Ekstrak informasi metode dari file Kotlin dengan semua metrik termasuk ATLD_method dan FANOUT_type_manual."""
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             code = f.read()
@@ -298,6 +444,8 @@ def extracted_method(file_path):
                 "NOA_type": 0,
                 "NIM_type": 0,
                 "ATFD_type": 0,
+                "FANOUT_type": 0,
+                "FANOUT_type_manual": 0,  # Removed regex version
                 "FANOUT_method": 0,
                 "ATLD_method": 0,
                 "CFNAMM_method": 0.0,
@@ -317,6 +465,8 @@ def extracted_method(file_path):
                 "NOA_type": 0,
                 "NIM_type": 0,
                 "ATFD_type": 0,
+                "FANOUT_type": 0,
+                "FANOUT_type_manual": 0,  # Removed regex version
                 "FANOUT_method": 0,
                 "ATLD_method": 0,
                 "CFNAMM_method": 0.0,
@@ -330,6 +480,8 @@ def extracted_method(file_path):
         noa_total = count_noa_type(class_declaration)
         nim_total = count_nim_type(class_declaration)
         atfd_total = count_atfd_type(class_declaration)
+        fanout_total = count_fanout_type(class_declaration)
+        fanout_manual_total = count_fanout_type_manual(code)  # Only manual version
         cfnamm_total = count_cfnamm_method(class_declaration)
 
         # Collect class-level attribute names
@@ -360,7 +512,7 @@ def extracted_method(file_path):
 
         for function_name, (loc_count, fanout_value, atld_value) in method_function.items():
             cfnamm_value = cfnamm_total.get(function_name, 0.0)
-            if isinstance(cfnamm_value, dict):  # fallback safeguard
+            if isinstance(cfnamm_value, dict):
                 cfnamm_value = 0.0
 
             datas.append({
@@ -372,17 +524,18 @@ def extracted_method(file_path):
                 "NOA_type": noa_total,
                 "NIM_type": nim_total,
                 "ATFD_type": atfd_total,
+                "FANOUT_type": fanout_total,
+                "FANOUT_type_manual": fanout_manual_total,  # Only manual version
                 "FANOUT_method": fanout_value,
                 "ATLD_method": atld_value,
-                "CFNAMM_method": float(cfnamm_value),  # 💡 enforce float
+                "CFNAMM_method": float(cfnamm_value),
                 "Error": ""
             })
 
-            
         for row in datas:
             for k, v in row.items():
                 if isinstance(v, dict):
-                    row[k] = str(v)  # or set to 0.0 if numeric column
+                    row[k] = str(v)
 
         return datas if datas else [{
             "Package": package_name,
@@ -393,24 +546,26 @@ def extracted_method(file_path):
             "NOA_type": noa_total,
             "NIM_type": nim_total,
             "ATFD_type": atfd_total,
+            "FANOUT_type": fanout_total,
+            "FANOUT_type_manual": fanout_manual_total,  # Only manual version
             "FANOUT_method": 0,
             "ATLD_method": 0,
-            "CFNAMM_method": 0.0,  # ✅ FIXED HERE
+            "CFNAMM_method": 0.0,
             "Error": "No functions found" if class_declaration.body.members else "Class has no members"
         }]
 
-    
-    
     except Exception as e:
         return [{
             "Package": "Error",
-            "Class": "Error",
+            "Class": "Error", 
             "Method": "Error",
             "LOC": 0,
             "NOMNAMM_type": 0,
             "NOA_type": 0,
             "NIM_type": 0,
             "ATFD_type": 0,
+            "FANOUT_type": 0,
+            "FANOUT_type_manual": 0,  # Only manual version
             "FANOUT_method": 0,
             "ATLD_method": 0,
             "CFNAMM_method": 0.0,
