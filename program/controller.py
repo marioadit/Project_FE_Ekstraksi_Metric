@@ -2,7 +2,7 @@ import os
 import tempfile
 import patoolib
 import pandas as pd
-from kopyt import Parser, node  # Gunakan `kopyt` sebagai parser AST Kotlin
+from kopyt import Parser, node 
 
 def count_nomnamm_type(class_declaration):
     """
@@ -71,11 +71,6 @@ def count_nim_type(class_declaration):
     if not hasattr(class_declaration, 'body') or class_declaration.body is None:
         return 0
     
-    # In Kotlin, inherited methods come from:
-    # 1. Superclass (Any class by default)
-    # 2. Interfaces
-    # This is a simplified approach that counts overridden methods
-    
     nim_count = 0
     
     for member in class_declaration.body.members:
@@ -139,6 +134,49 @@ def count_atfd_type(class_declaration):
 
     return len(foreign_accesses)
 
+def count_fanout_method(method_body: str, class_methods=None) -> int:
+    """
+    Refined FANOUT_method metric:
+    Count unique external class or method calls from a method body.
+
+    Args:
+        method_body (str): Method code as string.
+        class_methods (set): Optional, names of own class methods to exclude from count.
+
+    Returns:
+        int: Number of unique external class or method calls.
+    """
+    if not method_body:
+        return 0
+
+    external_calls = set()
+    class_methods = class_methods or set()
+
+    lines = method_body.split('\n')
+
+    for line in lines:
+        line = line.strip()
+
+        if not line or line.startswith('//') or line.startswith('/*'):
+            continue
+
+        # Case 1: object.method() or safe-call obj?.method()
+        if '.' in line and '(' in line:
+            segments = line.replace('?.', '.').split('.')
+            for i in range(len(segments) - 1):
+                receiver = segments[i].strip().split(' ')[-1]
+                method_part = segments[i + 1].split('(')[0].strip()
+
+                if receiver not in ('this', 'super', ''):
+                    external_calls.add(f"{receiver}.{method_part}")
+
+        # Case 2: direct method calls (no dot)
+        elif '(' in line:
+            candidate = line.split('(')[0].strip()
+            if candidate and candidate not in class_methods:
+                external_calls.add(candidate)
+
+    return len(external_calls)
 
 def count_atld_method(method_node, class_fields):
     attributes_accessed = set()
@@ -234,197 +272,35 @@ def count_cfnamm_method(class_declaration):
 
     return cfnamm_per_method
 
-def count_fanout_method(method_body: str, class_methods=None) -> int:
+def calculate_dit_type(class_declaration) -> int:
     """
-    Refined FANOUT_method metric:
-    Count unique external class or method calls from a method body.
+    Menghitung Depth of Inheritance Tree (DIT_type) untuk sebuah kelas
+    menggunakan node kopyt.
 
-    Args:
-        method_body (str): Method code as string.
-        class_methods (set): Optional, names of own class methods to exclude from count.
-
-    Returns:
-        int: Number of unique external class or method calls.
+    Interpretasi untuk parser satu file:
+    - DIT = 0 jika kelas tidak memiliki supertype eksplisit.
+    - DIT = 1 jika kelas memiliki setidaknya satu supertype eksplisit
+      (baik kelas maupun antarmuka).
     """
-    if not method_body:
-        return 0
-
-    external_calls = set()
-    class_methods = class_methods or set()
-
-    lines = method_body.split('\n')
-
-    for line in lines:
-        line = line.strip()
-
-        if not line or line.startswith('//') or line.startswith('/*'):
-            continue
-
-        # Case 1: object.method() or safe-call obj?.method()
-        if '.' in line and '(' in line:
-            segments = line.replace('?.', '.').split('.')
-            for i in range(len(segments) - 1):
-                receiver = segments[i].strip().split(' ')[-1]
-                method_part = segments[i + 1].split('(')[0].strip()
-
-                if receiver not in ('this', 'super', ''):
-                    external_calls.add(f"{receiver}.{method_part}")
-
-        # Case 2: direct method calls (no dot)
-        elif '(' in line:
-            candidate = line.split('(')[0].strip()
-            if candidate and candidate not in class_methods:
-                external_calls.add(candidate)
-
-    return len(external_calls)
-
-def count_fanout_type(class_declaration):
-    """
-    FANOUT_type — inspects function bodies, property types/values, parameter types, return types, and supertypes.
-    """
-    if not hasattr(class_declaration, 'body') or class_declaration.body is None:
-        print("⛔️ No class body.")
-        return 0
-
-    external_types = set()
-
-    def collect_types(n, depth=0):
-        prefix = "  " * depth
-
-        if isinstance(n, node.TypeReference):
-            print(f"{prefix}🔍 TypeReference → {n}")
-            if isinstance(n.subtype, node.UserType):
-                for segment in n.subtype.sequence:
-                    if isinstance(segment, node.SimpleUserType):
-                        name = segment.name
-                        # print(f"{prefix}  📎 Found type: {name}")
-                        if name and name[0].isupper():
-                            external_types.add(name)
-
-        elif isinstance(n, node.ConstructorInvocation):
-            print(f"{prefix}🔧 ConstructorInvocation → {n}")
-            if isinstance(n.invoker, node.UserType):
-                for segment in n.invoker.sequence:
-                    if isinstance(segment, node.SimpleUserType):
-                        name = segment.name
-                        # print(f"{prefix}  🏗 Instantiates class: {name}")
-                        if name and name[0].isupper():
-                            external_types.add(name)
-
-        elif isinstance(n, node.UserType):
-            for segment in n.sequence:
-                if isinstance(segment, node.SimpleUserType):
-                    name = segment.name
-                    # print(f"{prefix}📎 UserType segment: {name}")
-                    if name and name[0].isupper():
-                        external_types.add(name)
-
-        # Deep recursive search
-        if hasattr(n, '__dict__'):
-            for val in vars(n).values():
-                if isinstance(val, node.Node):
-                    collect_types(val, depth + 1)
-                elif isinstance(val, (list, tuple)):
-                    for item in val:
-                        if isinstance(item, node.Node):
-                            collect_types(item, depth + 1)
-
-    # Visit supertypes (inheritance/interfaces)
+    # Periksa apakah class_declaration memiliki atribut supertypes
     if hasattr(class_declaration, 'supertypes') and class_declaration.supertypes:
-        for supertype in class_declaration.supertypes:
-            collect_types(supertype)
+        # supertypes adalah Sequence[AnnotatedDelegationSpecifier]
+        # Jika sequence ini tidak kosong, berarti ada pewarisan eksplisit.
+        return 1
+    
+    # Untuk kasus di mana kelas mungkin tidak memiliki 'body'
+    # tetapi memiliki 'supertypes' (misalnya, interface)
+    # ClassDeclaration juga memiliki atribut supertypes.
+    # Contoh: class MyClass : SomeParent
+    if isinstance(class_declaration, node.ClassDeclaration) and class_declaration.supertypes:
+        return 1
 
-    # Visit class parameters (constructor properties)
-    if hasattr(class_declaration, 'constructor') and class_declaration.constructor:
-        for param in getattr(class_declaration.constructor.parameters, 'sequence', []):
-            collect_types(param.type)
-
-    for member in class_declaration.body.members:
-        # print(f"Member: {type(member).__name__}")
-
-        # Property types
-        if isinstance(member, node.PropertyDeclaration):
-            decl = getattr(member, 'declaration', None)
-            if isinstance(decl, node.VariableDeclaration):
-                if decl.type:
-                    collect_types(decl.type)
-            elif isinstance(decl, node.MultiVariableDeclaration):
-                for var in decl.sequence:
-                    if var.type:
-                        collect_types(var.type)
-            if member.value:
-                collect_types(member.value)
-
-        # Function parameter types and return type
-        elif isinstance(member, node.FunctionDeclaration):
-            if hasattr(member, 'parameters'):
-                for param in getattr(member.parameters, 'sequence', []):
-                    if hasattr(param, 'parameter') and hasattr(param.parameter, 'type') and param.parameter.type:
-                        collect_types(param.parameter.type)
-            if hasattr(member, 'type') and member.type:
-                collect_types(member.type)
-            if member.body:
-                collect_types(member.body)
-
-        else:
-            collect_types(member)
-
-    # print(f"✅ Total unique external types found: {len(external_types)}")
-    # print(f"🧾 Types: {external_types}")
-    return len(external_types)
-
-def count_fanout_type_manual(code: str) -> int:
-    """
-    FANOUT_type_manual — without regex.
-    Scans for:
-    - Type annotations (val x: Type)
-    - Constructor calls (Type(...))
-    """
-    types = set()
-
-    for line in code.splitlines():
-        line = line.strip()
-
-        if not line or line.startswith('//') or line.startswith('/*'):
-            continue
-
-        # ---- Type annotation detection ----
-        if ':' in line:
-            colon_index = line.index(':')
-            after_colon = line[colon_index + 1:].lstrip()
-
-            end = 0
-            while end < len(after_colon) and after_colon[end] not in ' =({,);':
-                end += 1
-            candidate = after_colon[:end]
-
-            if candidate and candidate[0].isupper():
-                types.add(candidate)
-
-        # ---- Constructor call detection ----
-        i = 0
-        while i < len(line):
-            if line[i].isalpha() and line[i].isupper():
-                start = i
-                while i < len(line) and (line[i].isalnum() or line[i] == '_'):
-                    i += 1
-                name = line[start:i]
-
-                # Check for immediate open paren after optional spaces
-                j = i
-                while j < len(line) and line[j] == ' ':
-                    j += 1
-                if j < len(line) and line[j] == '(':
-                    types.add(name)
-            else:
-                i += 1
-
-    return len(types)
-
-
+    # Jika tidak ada supertype eksplisit yang ditemukan, DIT adalah 0.
+    # Ini berarti kelas hanya mewarisi dari kotlin.Any secara implisit.
+    return 0
 
 def extracted_method(file_path):
-    """Ekstrak informasi metode dari file Kotlin dengan semua metrik termasuk ATLD_method dan FANOUT_type_manual."""
+    """Ekstrak informasi metode dari file Kotlin dengan semua metrik termasuk ATLD_method."""
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             code = f.read()
@@ -435,6 +311,8 @@ def extracted_method(file_path):
         package_name = result.package.name if result.package else "Unknown"
 
         if not result.declarations:
+            # Jika tidak ada deklarasi kelas utama, DIT tidak relevan atau 0.
+            dit_total = 0 
             return [{
                 "Package": package_name, 
                 "Class": "Unknown", 
@@ -444,17 +322,48 @@ def extracted_method(file_path):
                 "NOA_type": 0,
                 "NIM_type": 0,
                 "ATFD_type": 0,
-                "FANOUT_type": 0,
-                "FANOUT_type_manual": 0,  # Removed regex version
+                "DIT_type": dit_total,
                 "FANOUT_method": 0,
                 "ATLD_method": 0,
                 "CFNAMM_method": 0.0,
                 "Error": "No class declaration found"
             }]
         
-        class_declaration = result.declarations[0]
+        class_declaration = None
+        # Cari deklarasi kelas utama dalam file
+        for decl in result.declarations:
+            if isinstance(decl, node.ClassDeclaration):
+                class_declaration = decl
+                break
+        
+        if class_declaration is None:
+            # Jika tidak ada ClassDeclaration, tetapi ada deklarasi lain (misal: fun, val)
+            dit_total = 0 # DIT hanya berlaku untuk kelas
+            class_name = "None"
+            # Fallback jika tidak ada ClassDeclaration tetapi ada deklarasi lain
+            # Kita bisa memilih untuk tidak menghitung metrik kelas dalam kasus ini
+            # atau melaporkan sebagai "Unknown Class"
+            return [{
+                "Package": package_name, 
+                "Class": "UnknownClass", 
+                "Method": "None", 
+                "LOC": 0, 
+                "NOMNAMM_type": 0, 
+                "NOA_type": 0,
+                "NIM_type": 0,
+                "ATFD_type": 0,
+                "DIT_type": dit_total,
+                "FANOUT_method": 0,
+                "ATLD_method": 0,
+                "CFNAMM_method": 0.0,
+                "Error": "No ClassDeclaration found in file"
+            }]
+            
         class_name = class_declaration.name
         
+        # Hitung DIT menggunakan fungsi yang diperbaiki
+        dit_total = calculate_dit_type(class_declaration)
+
         if class_declaration.body is None:
             return [{
                 "Package": package_name, 
@@ -465,8 +374,7 @@ def extracted_method(file_path):
                 "NOA_type": 0,
                 "NIM_type": 0,
                 "ATFD_type": 0,
-                "FANOUT_type": 0,
-                "FANOUT_type_manual": 0,  # Removed regex version
+                "DIT_type": dit_total, # Added DIT_type
                 "FANOUT_method": 0,
                 "ATLD_method": 0,
                 "CFNAMM_method": 0.0,
@@ -480,8 +388,6 @@ def extracted_method(file_path):
         noa_total = count_noa_type(class_declaration)
         nim_total = count_nim_type(class_declaration)
         atfd_total = count_atfd_type(class_declaration)
-        fanout_total = count_fanout_type(class_declaration)
-        fanout_manual_total = count_fanout_type_manual(code)  # Only manual version
         cfnamm_total = count_cfnamm_method(class_declaration)
 
         # Collect class-level attribute names
@@ -524,14 +430,14 @@ def extracted_method(file_path):
                 "NOA_type": noa_total,
                 "NIM_type": nim_total,
                 "ATFD_type": atfd_total,
-                "FANOUT_type": fanout_total,
-                "FANOUT_type_manual": fanout_manual_total,  # Only manual version
+                "DIT_type": dit_total, # Added DIT_type here
                 "FANOUT_method": fanout_value,
                 "ATLD_method": atld_value,
                 "CFNAMM_method": float(cfnamm_value),
                 "Error": ""
             })
 
+            
         for row in datas:
             for k, v in row.items():
                 if isinstance(v, dict):
@@ -546,32 +452,33 @@ def extracted_method(file_path):
             "NOA_type": noa_total,
             "NIM_type": nim_total,
             "ATFD_type": atfd_total,
-            "FANOUT_type": fanout_total,
-            "FANOUT_type_manual": fanout_manual_total,  # Only manual version
+            "DIT_type": dit_total, # Added DIT_type here for no functions case
             "FANOUT_method": 0,
             "ATLD_method": 0,
             "CFNAMM_method": 0.0,
             "Error": "No functions found" if class_declaration.body.members else "Class has no members"
         }]
 
+    
+    
     except Exception as e:
         return [{
             "Package": "Error",
-            "Class": "Error", 
+            "Class": "Error",
             "Method": "Error",
             "LOC": 0,
             "NOMNAMM_type": 0,
             "NOA_type": 0,
             "NIM_type": 0,
             "ATFD_type": 0,
-            "FANOUT_type": 0,
-            "FANOUT_type_manual": 0,  # Only manual version
+            "DIT_type": 0, # Added DIT_type for error case
             "FANOUT_method": 0,
             "ATLD_method": 0,
             "CFNAMM_method": 0.0,
             "Error": str(e)
         }]
 
+# Fungsi extract_and_parse tetap sama
 def extract_and_parse(file):
     """Ekstrak arsip ZIP/RAR dan proses file Kotlin."""
     with tempfile.TemporaryDirectory() as temp_dir:
