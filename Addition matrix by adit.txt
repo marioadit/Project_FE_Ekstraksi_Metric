@@ -1,5 +1,5 @@
-ATFD_type sementara
-FANOUT_type problematik
+ATFD_type sementaradah
+FANOUT_type problematik(sementaradah)
 NOMNAMM_type aman
 NOA_Type aman
 NIM_type aman
