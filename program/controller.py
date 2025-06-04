@@ -140,133 +140,6 @@ def count_atfd_type(class_declaration):
 
     return len(foreign_accesses)
 
-def count_fanout_type(class_declaration: node.ClassDeclaration) -> int:
-    """
-    Menghitung metrik FANOUT_type untuk sebuah deklarasi kelas.
-    FANOUT_type adalah jumlah tipe data unik yang digunakan oleh kelas tersebut
-    (di luar tipe primitif dan tipe standar Kotlin).
-    """
-    if not class_declaration.body:
-        return 0
-
-    used_types: Set[str] = set()
-    
-    # Tipe primitif dan standar Kotlin yang umum
-    primitive_and_kotlin_standard_types = {
-        "Int", "Long", "Short", "Byte", "Double", "Float", "Char", "Boolean",
-        "String", "Unit", "Any", "Nothing",
-        "List", "MutableList", "Set", "MutableSet", "Map", "MutableMap",
-        "Array", "Iterable", "Collection", "Pair", "Triple",
-        # Tambahkan lebih banyak jika diperlukan
-    }
-
-    for member in class_declaration.body.members:
-        # Menangani deklarasi properti
-        if isinstance(member, node.PropertyDeclaration):
-            # Properti bisa memiliki 'type' langsung atau melalui 'declaration'
-            prop_type_node = None
-            if hasattr(member, 'type') and member.type: # Cek jika tipe properti langsung ada (jarang)
-                prop_type_node = member.type
-            elif member.declaration and hasattr(member.declaration, 'type') and member.declaration.type:
-                prop_type_node = member.declaration.type
-            
-            if prop_type_node:
-                # Kopyt Type bisa menjadi TypeReference, NullableType, ParenthesizedType, dll.
-                # Kita perlu mendapatkan nama tipe dasarnya.
-                current_type = prop_type_node
-                while hasattr(current_type, 'subtype') and current_type.subtype:
-                    current_type = current_type.subtype # Telusuri subtype (misal: NullableType -> TypeReference)
-
-                type_name = ""
-                if isinstance(current_type, node.UserType):
-                    # UserType adalah sequence SimpleUserType (misal: java.util.HashMap)
-                    if current_type.sequence:
-                        type_name = current_type.sequence[-1].name # Ambil nama tipe terakhir (HashMap)
-                elif isinstance(current_type, node.Identifier) and hasattr(current_type, 'value'):
-                    type_name = current_type.value
-                elif isinstance(current_type, node.TypeReference) and hasattr(current_type, 'subtype'):
-                    # Jika TypeReference memiliki subtype (misal: "dynamic"), ambil dari subtype
-                    if isinstance(current_type.subtype, str):
-                        type_name = current_type.subtype
-                    elif isinstance(current_type.subtype, node.UserType):
-                        if current_type.subtype.sequence:
-                            type_name = current_type.subtype.sequence[-1].name
-                else:
-                    type_name = str(current_type) # Fallback string representation
-
-                if type_name and type_name not in primitive_and_kotlin_standard_types:
-                    # Hapus generic arguments seperti <String>
-                    if '<' in type_name:
-                        type_name = type_name.split('<')[0]
-                    used_types.add(type_name)
-        
-        # Menangani deklarasi fungsi
-        elif isinstance(member, node.FunctionDeclaration):
-            # Tipe pengembalian fungsi
-            if hasattr(member, 'type') and member.type: # Mengakses .type untuk return type
-                current_type = member.type
-                while hasattr(current_type, 'subtype') and current_type.subtype:
-                    current_type = current_type.subtype
-
-                type_name = ""
-                if isinstance(current_type, node.UserType):
-                    if current_type.sequence:
-                        type_name = current_type.sequence[-1].name
-                elif isinstance(current_type, node.Identifier) and hasattr(current_type, 'value'):
-                    type_name = current_type.value
-                elif isinstance(current_type, node.TypeReference) and hasattr(current_type, 'subtype'):
-                    if isinstance(current_type.subtype, str):
-                        type_name = current_type.subtype
-                    elif isinstance(current_type.subtype, node.UserType):
-                        if current_type.subtype.sequence:
-                            type_name = current_type.subtype.sequence[-1].name
-                else:
-                    type_name = str(current_type)
-
-                if type_name and type_name not in primitive_and_kotlin_standard_types:
-                    if '<' in type_name:
-                        type_name = type_name.split('<')[0]
-                    used_types.add(type_name)
-            
-            # Parameter fungsi
-            if hasattr(member, 'parameters'):
-                for parameter in member.parameters:
-                    if hasattr(parameter, 'type') and parameter.type:
-                        current_type = parameter.type
-                        while hasattr(current_type, 'subtype') and current_type.subtype:
-                            current_type = current_type.subtype
-
-                        type_name = ""
-                        if isinstance(current_type, node.UserType):
-                            if current_type.sequence:
-                                type_name = current_type.sequence[-1].name
-                        elif isinstance(current_type, node.Identifier) and hasattr(current_type, 'value'):
-                            type_name = current_type.value
-                        elif isinstance(current_type, node.TypeReference) and hasattr(current_type, 'subtype'):
-                            if isinstance(current_type.subtype, str):
-                                type_name = current_type.subtype
-                            elif isinstance(current_type.subtype, node.UserType):
-                                if current_type.subtype.sequence:
-                                    type_name = current_type.subtype.sequence[-1].name
-                        else:
-                            type_name = str(current_type)
-                        
-                        if type_name and type_name not in primitive_and_kotlin_standard_types:
-                            if '<' in type_name:
-                                type_name = type_name.split('<')[0]
-                            used_types.add(type_name)
-            
-            # Jika ada type_parameters (untuk fungsi generic), tambahkan juga
-            # Atribut untuk type parameters pada FunctionDeclaration di kopyt adalah 'generics'
-            if hasattr(member, 'generics') and member.generics:
-                for type_param in member.generics:
-                    if hasattr(type_param, 'name') and type_param.name:
-                        type_name = type_param.name
-                        if type_name not in primitive_and_kotlin_standard_types:
-                            used_types.add(type_name)
-
-    return len(used_types)
-
 def count_fanout_method(method_body: str, class_methods=None) -> int:
     """
     Refined FANOUT_method metric:
@@ -406,7 +279,7 @@ def count_cfnamm_method(class_declaration):
     return cfnamm_per_method
 
 # Fungsi DIT_type yang sudah diperbaiki untuk memanfaatkan kopyt
-def calculate_dit_type(class_declaration) -> int:
+def count_dit_type(class_declaration) -> int:
     """
     Menghitung Depth of Inheritance Tree (DIT_type) untuk sebuah kelas
     menggunakan node kopyt.
@@ -435,7 +308,7 @@ def calculate_dit_type(class_declaration) -> int:
 
 
 def extracted_method(file_path):
-    """Ekstrak informasi metode dari file Kotlin dengan semua metrik termasuk ATLD_method dan FANOUT_type."""
+    """Ekstrak informasi metode dari file Kotlin dengan semua metrik termasuk ATLD_method."""
     results_for_file = [] # Mengumpulkan hasil untuk semua kelas/metode dalam file ini
     
     try:
@@ -459,7 +332,6 @@ def extracted_method(file_path):
                 "NIM_type": 0,
                 "ATFD_type": 0,
                 "DIT_type": 0, # Default 0 jika tidak ada deklarasi kelas
-                "FANOUT_type": 0,
                 "FANOUT_method": 0,
                 "ATLD_method": 0,
                 "CFNAMM_method": 0.0,
@@ -479,7 +351,7 @@ def extracted_method(file_path):
             class_name = class_declaration.name
             
             # Hitung DIT_type menggunakan fungsi yang sudah diperbaiki dengan kopyt
-            dit_total = calculate_dit_type(class_declaration)
+            dit_total = count_dit_type(class_declaration)
 
             if class_declaration.body is None:
                 results_for_file.append({
@@ -492,7 +364,6 @@ def extracted_method(file_path):
                     "NIM_type": 0,
                     "ATFD_type": 0,
                     "DIT_type": dit_total, # Tambahkan DIT_type
-                    "FANOUT_type": 0, # Default 0 jika tidak ada body
                     "FANOUT_method": 0,
                     "ATLD_method": 0,
                     "CFNAMM_method": 0.0,
@@ -505,7 +376,6 @@ def extracted_method(file_path):
             noa_total = count_noa_type(class_declaration)
             nim_total = count_nim_type(class_declaration)
             atfd_total = count_atfd_type(class_declaration)
-            fanout_type_total = count_fanout_type(class_declaration) # Panggil fungsi FANOUT_type di sini
             cfnamm_total = count_cfnamm_method(class_declaration)
 
             # Collect class-level attribute names for ATLD_method
@@ -546,7 +416,6 @@ def extracted_method(file_path):
                             "NIM_type": nim_total,
                             "ATFD_type": atfd_total,
                             "DIT_type": dit_total, # Tambahkan DIT_type per baris method
-                            "FANOUT_type": fanout_type_total, # Tambahkan FANOUT_type per baris method
                             "FANOUT_method": fanout_value,
                             "ATLD_method": atld_value,
                             "CFNAMM_method": float(cfnamm_value),
@@ -564,7 +433,6 @@ def extracted_method(file_path):
                             "NIM_type": nim_total,
                             "ATFD_type": atfd_total,
                             "DIT_type": dit_total, # Tambahkan DIT_type pada error method
-                            "FANOUT_type": fanout_type_total, # Tambahkan FANOUT_type pada error method
                             "FANOUT_method": 0,
                             "ATLD_method": 0,
                             "CFNAMM_method": 0.0,
@@ -584,7 +452,6 @@ def extracted_method(file_path):
                     "NIM_type": nim_total,
                     "ATFD_type": atfd_total,
                     "DIT_type": dit_total, # Tambahkan DIT_type pada kelas tanpa fungsi
-                    "FANOUT_type": fanout_type_total, # Tambahkan FANOUT_type pada kelas tanpa fungsi
                     "FANOUT_method": 0,
                     "ATLD_method": 0,
                     "CFNAMM_method": 0.0,
@@ -603,7 +470,6 @@ def extracted_method(file_path):
             "NIM_type": 0,
             "ATFD_type": 0,
             "DIT_type": 0, # Default 0 pada error fatal
-            "FANOUT_type": 0, # Default 0 pada error fatal
             "FANOUT_method": 0,
             "ATLD_method": 0,
             "CFNAMM_method": 0.0,
