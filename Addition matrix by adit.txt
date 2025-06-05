@@ -1,5 +1,5 @@
 ATFD_type data yang dihitung sudah benar tinggal dihitung semua
-FANOUT_type hasil hitung masih salah
+FANOUT_type sementaradah
 NOMNAMM_type aman
 NOA_Type aman
 NIM_type aman

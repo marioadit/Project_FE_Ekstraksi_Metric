@@ -307,9 +307,70 @@ def count_dit_type(class_declaration) -> int:
     return 0
 
 
+def count_fanout_type(class_declaration, all_classes_in_file: Set[str]) -> int:
+    """
+    Menghitung FANOUT_type (Class-Level Fan-Out) - jumlah kelas/modul lain yang bergantung langsung.
+    Dilakukan dengan manual string parsing tanpa regex.
+    
+    Args:
+        class_declaration: Deklarasi kelas yang sedang diproses
+        all_classes_in_file: Set semua nama kelas dalam file yang sama
+        
+    Returns:
+        int: Jumlah kelas/modul eksternal yang digunakan oleh kelas ini
+    """
+    if not hasattr(class_declaration, 'body') or class_declaration.body is None:
+        return 0
+    
+    external_dependencies = set()
+    current_class_name = class_declaration.name
+    
+    # Fungsi helper untuk memeriksa apakah sebuah nama adalah kelas eksternal
+    def is_external_dependency(name: str) -> bool:
+        return (name 
+                and name != current_class_name 
+                and name not in all_classes_in_file 
+                and name not in {'this', 'super', 'Any', 'Unit', 'Nothing'})
+    
+    # Iterasi melalui semua anggota kelas
+    for member in class_declaration.body.members:
+        # Untuk properti dengan tipe eksplisit
+        if isinstance(member, node.PropertyDeclaration):
+            if hasattr(member, 'type'):
+                type_str = str(member.type)
+                if is_external_dependency(type_str.split('.')[-1]):  # Ambil bagian terakhir dari qualified name
+                    external_dependencies.add(type_str.split('.')[-1])
+        
+        # Untuk fungsi dengan parameter atau return type
+        elif isinstance(member, node.FunctionDeclaration):
+            # Periksa return type
+            if hasattr(member, 'type'):
+                return_type = str(member.type)
+                if is_external_dependency(return_type.split('.')[-1]):
+                    external_dependencies.add(return_type.split('.')[-1])
+            
+            # Periksa parameter types
+            if hasattr(member, 'parameters'):
+                for param in member.parameters:
+                    if hasattr(param, 'type'):
+                        param_type = str(param.type)
+                        if is_external_dependency(param_type.split('.')[-1]):
+                            external_dependencies.add(param_type.split('.')[-1])
+            
+            # Periksa body fungsi untuk instance creation
+            if hasattr(member, 'body') and member.body:
+                body_str = str(member.body)
+                # Cari pola "ClassName(" atau "ClassName<"
+                for class_name in all_classes_in_file:
+                    if f"{class_name}(" in body_str or f"{class_name}<" in body_str:
+                        if is_external_dependency(class_name):
+                            external_dependencies.add(class_name)
+    
+    return len(external_dependencies)
+
 def extracted_method(file_path):
-    """Ekstrak informasi metode dari file Kotlin dengan semua metrik termasuk ATLD_method."""
-    results_for_file = [] # Mengumpulkan hasil untuk semua kelas/metode dalam file ini
+    """Ekstrak informasi metode dari file Kotlin dengan semua metrik termasuk FANOUT_type."""
+    results_for_file = []
     
     try:
         with open(file_path, "r", encoding="utf-8") as f:
@@ -320,8 +381,13 @@ def extracted_method(file_path):
 
         package_name = result.package.name if result.package else "Unknown"
 
+        # Kumpulkan semua nama kelas dalam file ini untuk perhitungan FANOUT_type
+        all_classes_in_file = set()
+        for decl in result.declarations:
+            if isinstance(decl, (node.ClassDeclaration, node.ObjectDeclaration, node.InterfaceDeclaration)):
+                all_classes_in_file.add(decl.name)
+
         if not result.declarations:
-            # Jika tidak ada deklarasi (kelas/object/interface), catat sebagai file tanpa kelas
             results_for_file.append({
                 "Package": package_name, 
                 "Class": "No Class", 
@@ -331,54 +397,53 @@ def extracted_method(file_path):
                 "NOA_type": 0,
                 "NIM_type": 0,
                 "ATFD_type": 0,
-                "DIT_type": 0, # Default 0 jika tidak ada deklarasi kelas
+                "DIT_type": 0,
+                "FANOUT_type": 0,  # Tambahkan FANOUT_type
                 "FANOUT_method": 0,
                 "ATLD_method": 0,
                 "CFNAMM_method": 0.0,
                 "Error": "No class declaration found in file"
             })
-            return results_for_file # Langsung kembali
+            return results_for_file
 
-        # Iterasi melalui semua deklarasi tingkat atas (top-level declarations)
         for class_declaration in result.declarations:
-            # Pastikan ini benar-benar deklarasi kelas/object/interface yang memiliki body
             if not isinstance(class_declaration, (node.ClassDeclaration, node.ObjectDeclaration, node.InterfaceDeclaration)):
-                # Handle cases where top-level declaration is a function or property, not a class/object/interface
-                # For this context, we usually care about metrics per class, so skip other top-level decls
-                # You might consider logging or adding a specific entry for non-class top-level declarations if needed.
-                continue 
+                continue
 
             class_name = class_declaration.name
             
-            # Hitung DIT_type menggunakan fungsi yang sudah diperbaiki dengan kopyt
+            # Hitung DIT_type (diubah sesuai permintaan)
             dit_total = count_dit_type(class_declaration)
+            
+            # Hitung FANOUT_type
+            fanout_type = count_fanout_type(class_declaration, all_classes_in_file)
 
             if class_declaration.body is None:
                 results_for_file.append({
                     "Package": package_name, 
                     "Class": class_name, 
                     "Method": "None", 
-                    "LOC": 0, # Atau LOC untuk kelas kosong?
+                    "LOC": 0,
                     "NOMNAMM_type": 0, 
                     "NOA_type": 0,
                     "NIM_type": 0,
                     "ATFD_type": 0,
-                    "DIT_type": dit_total, # Tambahkan DIT_type
+                    "DIT_type": dit_total,
+                    "FANOUT_type": fanout_type,  # Tambahkan FANOUT_type
                     "FANOUT_method": 0,
                     "ATLD_method": 0,
                     "CFNAMM_method": 0.0,
                     "Error": "Class has no body or members"
                 })
-                continue # Lanjutkan ke deklarasi berikutnya
+                continue
 
-            # Hitung metrik tingkat kelas
+            # Hitung metrik lainnya (tetap sama)
             nomnamm_total = count_nomnamm_type(class_declaration)
             noa_total = count_noa_type(class_declaration)
             nim_total = count_nim_type(class_declaration)
             atfd_total = count_atfd_type(class_declaration)
             cfnamm_total = count_cfnamm_method(class_declaration)
 
-            # Collect class-level attribute names for ATLD_method
             class_fields = set()
             for member in class_declaration.body.members:
                 if isinstance(member, node.PropertyDeclaration):
@@ -389,7 +454,6 @@ def extracted_method(file_path):
                         for var in decl.sequence:
                             class_fields.add(var.name)
 
-            # Memproses setiap fungsi dalam kelas
             method_found_in_class = False
             for member in class_declaration.body.members:
                 if isinstance(member, node.FunctionDeclaration):
@@ -415,14 +479,14 @@ def extracted_method(file_path):
                             "NOA_type": noa_total,
                             "NIM_type": nim_total,
                             "ATFD_type": atfd_total,
-                            "DIT_type": dit_total, # Tambahkan DIT_type per baris method
+                            "DIT_type": dit_total,
+                            "FANOUT_type": fanout_type,  # Tambahkan FANOUT_type
                             "FANOUT_method": fanout_value,
                             "ATLD_method": atld_value,
                             "CFNAMM_method": float(cfnamm_value),
                             "Error": ""
                         })
                     except Exception as e:
-                        # Tangani error per method, bukan per file
                         results_for_file.append({
                             "Package": package_name,
                             "Class": class_name,
@@ -432,16 +496,16 @@ def extracted_method(file_path):
                             "NOA_type": noa_total,
                             "NIM_type": nim_total,
                             "ATFD_type": atfd_total,
-                            "DIT_type": dit_total, # Tambahkan DIT_type pada error method
+                            "DIT_type": dit_total,
+                            "FANOUT_type": fanout_type,  # Tambahkan FANOUT_type pada error
                             "FANOUT_method": 0,
                             "ATLD_method": 0,
                             "CFNAMM_method": 0.0,
                             "Error": f"Error processing method: {str(e)}"
                         })
-                        continue # Lanjutkan ke method berikutnya
+                        continue
 
             if not method_found_in_class:
-                # Jika kelas tidak memiliki fungsi, tambahkan satu baris untuk kelas tersebut
                 results_for_file.append({
                     "Package": package_name,
                     "Class": class_name,
@@ -451,7 +515,8 @@ def extracted_method(file_path):
                     "NOA_type": noa_total,
                     "NIM_type": nim_total,
                     "ATFD_type": atfd_total,
-                    "DIT_type": dit_total, # Tambahkan DIT_type pada kelas tanpa fungsi
+                    "DIT_type": dit_total,
+                    "FANOUT_type": fanout_type,  # Tambahkan FANOUT_type
                     "FANOUT_method": 0,
                     "ATLD_method": 0,
                     "CFNAMM_method": 0.0,
@@ -459,7 +524,6 @@ def extracted_method(file_path):
                 })
 
     except Exception as e:
-        # Ini adalah fallback jika parsing file itu sendiri gagal
         results_for_file.append({
             "Package": "Error",
             "Class": "Error", 
@@ -469,14 +533,14 @@ def extracted_method(file_path):
             "NOA_type": 0,
             "NIM_type": 0,
             "ATFD_type": 0,
-            "DIT_type": 0, # Default 0 pada error fatal
+            "DIT_type": 0,
+            "FANOUT_type": 0,  # Tambahkan FANOUT_type pada error
             "FANOUT_method": 0,
             "ATLD_method": 0,
             "CFNAMM_method": 0.0,
             "Error": f"Fatal error parsing file: {str(e)}"
         })
 
-    # Pastikan tidak ada dict yang tersisa dalam output akhir
     for row in results_for_file:
         for k, v in row.items():
             if isinstance(v, dict):
