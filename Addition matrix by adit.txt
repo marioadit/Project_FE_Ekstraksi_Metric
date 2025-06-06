@@ -1,4 +1,4 @@
-ATFD_type data yang dihitung sudah benar tinggal dihitung semua
+ATFD_type sementaradah data yang dihitung sudah benar tinggal dihitung semua
 FANOUT_type sementaradah dari sum fanout metod
 NOMNAMM_type aman
 NOA_Type aman

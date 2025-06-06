@@ -93,34 +93,63 @@ def count_nim_type(class_declaration):
 def count_atfd_type(class_declaration):
     foreign_accesses = set()
 
-    # Collect current class field names
-    current_fields = {
-        member.declaration.name
-        for member in class_declaration.body.members
-        if isinstance(member, node.PropertyDeclaration)
-    }
+    # Collect current class field names (including MultiVariableDeclaration)
+    current_fields = set()
+    for member in class_declaration.body.members:
+        if isinstance(member, node.PropertyDeclaration):
+            decl = member.declaration
+            if isinstance(decl, node.VariableDeclaration):
+                current_fields.add(decl.name)
+            elif isinstance(decl, node.MultiVariableDeclaration):
+                for var in decl.sequence:
+                    current_fields.add(var.name)
 
     def collect_foreign_accesses(expr):
+        # Handle PostfixUnaryExpression (existing case)
         if isinstance(expr, node.PostfixUnaryExpression):
             if isinstance(expr.expression, node.Identifier):
                 root_name = expr.expression.value
                 if root_name not in current_fields and root_name != "this":
                     foreign_accesses.add(root_name)
 
-            for suffix in expr.suffixes:
-                if isinstance(suffix, node.NavigationSuffix):
-                    if isinstance(expr.expression, node.Identifier):
-                        base = expr.expression.value
-                        if base not in current_fields and base != "this":
-                            foreign_accesses.add(base)
+            if hasattr(expr, 'suffixes'):
+                for suffix in expr.suffixes:
+                    if isinstance(suffix, node.NavigationSuffix):
+                        if isinstance(expr.expression, node.Identifier):
+                            base = expr.expression.value
+                            if base not in current_fields and base != "this":
+                                foreign_accesses.add(base)
 
+        # Handle Assignments (existing case)
         elif isinstance(expr, node.Assignment):
             collect_foreign_accesses(expr.value)
 
+        # Handle simple Identifiers (existing case)
         elif isinstance(expr, node.Identifier):
             if expr.value not in current_fields and expr.value != "this":
                 foreign_accesses.add(expr.value)
 
+        # Handle CallExpression (new case using available node types)
+        elif hasattr(node, 'CallExpression') and isinstance(expr, node.CallExpression):
+            if hasattr(expr, 'callee'):
+                # Handle cases like otherClass.method()
+                if isinstance(expr.callee, node.Identifier):
+                    if expr.callee.value not in current_fields and expr.callee.value != "this":
+                        foreign_accesses.add(expr.callee.value)
+                # Handle cases like obj.field.method()
+                elif hasattr(expr.callee, 'expression') and isinstance(expr.callee.expression, node.Identifier):
+                    if expr.callee.expression.value not in current_fields and expr.callee.expression.value != "this":
+                        foreign_accesses.add(expr.callee.expression.value)
+
+        # Handle MemberAccess (alternative to NavigationExpression if available)
+        if hasattr(node, 'MemberAccess') and isinstance(expr, node.MemberAccess):
+            if hasattr(expr, 'expression') and isinstance(expr.expression, node.Identifier):
+                receiver = expr.expression.value
+                if receiver not in current_fields and receiver != "this":
+                    if hasattr(expr, 'selector') and isinstance(expr.selector, node.Identifier):
+                        foreign_accesses.add(f"{receiver}.{expr.selector.value}")
+
+        # Original recursive traversal (unchanged)
         elif hasattr(expr, "__dict__"):
             for val in vars(expr).values():
                 if isinstance(val, node.Node):
@@ -130,13 +159,16 @@ def count_atfd_type(class_declaration):
                         if isinstance(item, node.Node):
                             collect_foreign_accesses(item)
 
-    # Visit all methods in the class
+    # Visit all methods in the class (unchanged)
     for member in class_declaration.body.members:
         if isinstance(member, node.FunctionDeclaration):
             body = member.body
             if isinstance(body, node.Block):
                 for stmt in body.sequence:
-                    collect_foreign_accesses(stmt.statement)
+                    if hasattr(stmt, 'statement'):
+                        collect_foreign_accesses(stmt.statement)
+            elif body:  # Handle other body types
+                collect_foreign_accesses(body)
 
     return len(foreign_accesses)
 
