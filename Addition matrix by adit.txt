@@ -1,9 +1,9 @@
-ATFD_type sementaradah data yang dihitung sudah benar tinggal dihitung semua
-FANOUT_type sementaradah dari sum fanout metod
+ATFD_type sementaradah | data yang dihitung sudah benar tinggal dihitung semua
+FANOUT_type sementaradah | dari sum fanout metod
 NOMNAMM_type aman
 NOA_Type aman
 NIM_type aman
-DIT_type ubah hitungan dari 1 atau 0 jadi hitungan sesuai kedalaman sebuah kelas
+DIT_type sementaradah | ubah hitungan dari 1 atau 0 jadi hitungan sesuai kedalaman sebuah kelas
 FANOUT_method aman
 CFNAMM_method aman
 ATLD_method aman

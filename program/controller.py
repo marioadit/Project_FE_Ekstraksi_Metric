@@ -310,33 +310,78 @@ def count_cfnamm_method(class_declaration):
 
     return cfnamm_per_method
 
-# Fungsi DIT_type yang sudah diperbaiki untuk memanfaatkan kopyt
-def count_dit_type(class_declaration) -> int:
-    """
-    Menghitung Depth of Inheritance Tree (DIT_type) untuk sebuah kelas
-    menggunakan node kopyt.
-
-    Interpretasi untuk parser satu file:
-    - DIT = 0 jika kelas tidak memiliki supertype eksplisit.
-    - DIT = 1 jika kelas memiliki setidaknya satu supertype eksplisit
-      (baik kelas maupun antarmuka).
-    """
-    # Periksa apakah class_declaration memiliki atribut supertypes
-    if hasattr(class_declaration, 'supertypes') and class_declaration.supertypes:
-        # supertypes adalah Sequence[AnnotatedDelegationSpecifier]
-        # Jika sequence ini tidak kosong, berarti ada pewarisan eksplisit.
-        return 1
+# KAMUS UNTUK PERKIRAAN DIT BERBASIS NAMA KELAS
+# Nilai ini adalah perkiraan dan bisa Anda sesuaikan/tambahkan.
+PREDEFINED_DIT_MAP = {
+    # Android Core & AppCompat
+    "Object": 0,
+    "Any": 0,
+    "Context": 1,
+    "Application": 2,
+    "Activity": 2,
+    "Fragment": 1,
+    "Service": 2,
+    "BroadcastReceiver": 1,
+    "ContentProvider": 2,
+    "ViewModel": 1,
+    "LiveData": 1,
+    "RecyclerView": 2,
+    "Adapter": 2, # RecyclerView.Adapter
+    "ViewHolder": 1, # RecyclerView.ViewHolder
     
-    # Untuk kasus di mana kelas mungkin tidak memiliki 'body'
-    # tetapi memiliki 'supertypes' (misalnya, interface)
-    # ClassDeclaration juga memiliki atribut supertypes.
-    # Contoh: class MyClass : SomeParent
-    if isinstance(class_declaration, node.ClassDeclaration) and class_declaration.supertypes:
-        return 1
+    # AppCompat & Material
+    "AppCompatActivity": 3,
+    "FragmentActivity": 2,
+    "MaterialAlertDialogBuilder": 2,
+    "DialogFragment": 2,
+    "BottomSheetDialogFragment": 3,
+    
+    # Coroutines
+    "CoroutineScope": 1,
+    
+    # Common Java
+    "Exception": 1,
+    "RuntimeException": 2,
+    "Thread": 1,
+}
 
-    # Jika tidak ada supertype eksplisit yang ditemukan, DIT adalah 0.
-    # Ini berarti kelas hanya mewarisi dari kotlin.Any secara implisit.
-    return 0
+def count_dit_by_name(class_declaration) -> int:
+    """
+    Memperkirakan DIT berdasarkan nama superclass menggunakan kamus yang telah ditentukan.
+    """
+    if not hasattr(class_declaration, 'supertypes') or not class_declaration.supertypes:
+        return 0
+
+    max_depth = 0
+    
+    for supertype_node in class_declaration.supertypes:
+        parent_name = None
+        delegate = getattr(supertype_node, 'delegate', None)
+        
+        if isinstance(delegate, node.ConstructorInvocation):
+            parent_name = str(delegate.invoker)
+        elif isinstance(delegate, node.UserType):
+            parent_name = str(delegate)
+
+        if parent_name:
+            # Hapus generic types jika ada (e.g., "Adapter<MyViewHolder>" -> "Adapter")
+            clean_parent_name = parent_name.split('<')[0]
+            
+            # Cek di kamus
+            if clean_parent_name in PREDEFINED_DIT_MAP:
+                depth = 1 + PREDEFINED_DIT_MAP[clean_parent_name]
+            else:
+                # Jika tidak ada di kamus, anggap DIT-nya 1
+                depth = 1
+            
+            if depth > max_depth:
+                max_depth = depth
+
+    # Jika tidak ada superclass yang dikenali, tapi ada supertypes, default ke 1
+    if max_depth == 0 and class_declaration.supertypes:
+        return 1
+        
+    return max_depth
 
 def count_fanout_type(class_declaration, fanout_method_values):
     """
@@ -362,81 +407,75 @@ def count_fanout_type(class_declaration, fanout_method_values):
     return total_fanout
 
 def extracted_method(file_path):
-    """Ekstrak informasi metode dari file Kotlin dengan semua metrik termasuk ATLD_method."""
-    results_for_file = [] # Mengumpulkan hasil untuk semua kelas/metode dalam file ini
+    """
+    Ekstrak informasi metode dan metrik dari satu file Kotlin.
+    Fungsi ini lengkap dan menangani berbagai kasus.
+    """
+    results_for_file = []
     
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             code = f.read()
         
         parser = Parser(code)
-        result = parser.parse()
+        ast = parser.parse()
 
-        package_name = result.package.name if result.package else "Unknown"
+        package_name = ast.package.name if ast.package else "Unknown"
 
-        if not result.declarations:
-            # Jika tidak ada deklarasi (kelas/object/interface), catat sebagai file tanpa kelas
+        # Kasus 1: File tidak memiliki deklarasi kelas sama sekali
+        if not ast.declarations:
             results_for_file.append({
                 "Package": package_name, 
-                "Class": "No Class", 
+                "Class": "No Class Found", 
                 "Method": "None", 
                 "LOC": len(code.splitlines()), 
-                "NOMNAMM_type": 0, 
-                "NOA_type": 0,
-                "NIM_type": 0,
-                "ATFD_type": 0,
-                "DIT_type": 0, # Default 0 jika tidak ada deklarasi kelas
-                "FANOUT_type": 0, # Tambahkan FANOUT_type dengan default 0
-                "FANOUT_method": 0,
-                "ATLD_method": 0,
-                "CFNAMM_method": 0.0,
-                "Error": "No class declaration found in file"
+                "NOMNAMM_type": 0, "NOA_type": 0, "NIM_type": 0,
+                "ATFD_type": 0, "DIT_type": 0, "FANOUT_type": 0,
+                "FANOUT_method": 0, "ATLD_method": 0.0, "CFNAMM_method": 0.0,
+                "Error": "No class declarations in file"
             })
-            return results_for_file # Langsung kembali
+            return results_for_file
 
-        # Iterasi melalui semua deklarasi tingkat atas (top-level declarations)
-        for class_declaration in result.declarations:
-            # Pastikan ini benar-benar deklarasi kelas/object/interface yang memiliki body
-            if not isinstance(class_declaration, (node.ClassDeclaration, node.ObjectDeclaration, node.InterfaceDeclaration)):
-                # Handle cases where top-level declaration is a function or property, not a class/object/interface
-                # For this context, we usually care about metrics per class, so skip other top-level decls
-                # You might consider logging or adding a specific entry for non-class top-level declarations if needed.
-                continue 
+        # Iterasi melalui semua deklarasi di file
+        for class_declaration in ast.declarations:
+            # Hanya proses deklarasi kelas, abaikan fungsi atau properti top-level
+            if not isinstance(class_declaration, node.ClassDeclaration):
+                continue
 
             class_name = class_declaration.name
             
-            # Hitung DIT_type menggunakan fungsi yang sudah diperbaiki dengan kopyt
-            dit_total = count_dit_type(class_declaration)
-
-            if class_declaration.body is None:
-                results_for_file.append({
-                    "Package": package_name, 
-                    "Class": class_name, 
-                    "Method": "None", 
-                    "LOC": 0, # Atau LOC untuk kelas kosong?
-                    "NOMNAMM_type": 0, 
-                    "NOA_type": 0,
-                    "NIM_type": 0,
-                    "ATFD_type": 0,
-                    "DIT_type": dit_total, # Tambahkan DIT_type
-                    "FANOUT_type": 0, # Tambahkan FANOUT_type dengan default 0
-                    "FANOUT_method": 0,
-                    "ATLD_method": 0,
-                    "CFNAMM_method": 0.0,
-                    "Error": "Class has no body or members"
-                })
-                continue # Lanjutkan ke deklarasi berikutnya
-
-            # Hitung metrik tingkat kelas
-            nomnamm_total = count_nomnamm_type(class_declaration)
-            noa_total = count_noa_type(class_declaration)
-            nim_total = count_nim_type(class_declaration)
-            atfd_total = count_atfd_type(class_declaration)
-            cfnamm_total = count_cfnamm_method(class_declaration)
-            fanout_method_values = {}  # Untuk menyimpan FANOUT_method per method
-
-            # Collect class-level attribute names for ATLD_method
+            # --- Perhitungan Metrik Tingkat Kelas ---
+            # Metrik ini dihitung sekali per kelas dan nilainya sama untuk semua baris method dari kelas tsb.
+            dit_total = count_dit_by_name(class_declaration) #
+            
+            # Default values jika kelas tidak punya body
+            nomnamm_total = 0
+            noa_total = 0
+            nim_total = 0
+            atfd_total = 0
+            cfnamm_results = {}
+            fanout_method_values = {}
             class_fields = set()
+
+            # Kasus 2: Kelas tidak punya body
+            if not hasattr(class_declaration, 'body') or class_declaration.body is None:
+                results_for_file.append({
+                    "Package": package_name, "Class": class_name, "Method": "None", "LOC": 0,
+                    "NOMNAMM_type": 0, "NOA_type": 0, "NIM_type": 0,
+                    "ATFD_type": 0, "DIT_type": dit_total, "FANOUT_type": 0,
+                    "FANOUT_method": 0, "ATLD_method": 0.0, "CFNAMM_method": 0.0,
+                    "Error": "Class has no body"
+                })
+                continue # Lanjut ke deklarasi kelas berikutnya
+
+            # Jika kelas punya body, hitung metrik tingkat kelas lainnya
+            nomnamm_total = count_nomnamm_type(class_declaration) #
+            noa_total = count_noa_type(class_declaration) #
+            nim_total = count_nim_type(class_declaration) #
+            atfd_total = count_atfd_type(class_declaration) #
+            cfnamm_results = count_cfnamm_method(class_declaration) #
+
+            # Kumpulkan properti kelas untuk perhitungan ATLD
             for member in class_declaration.body.members:
                 if isinstance(member, node.PropertyDeclaration):
                     decl = member.declaration
@@ -446,111 +485,66 @@ def extracted_method(file_path):
                         for var in decl.sequence:
                             class_fields.add(var.name)
 
-            # Memproses setiap fungsi dalam kelas
+            # --- Perhitungan Metrik Tingkat Method ---
             method_found_in_class = False
             for member in class_declaration.body.members:
                 if isinstance(member, node.FunctionDeclaration):
                     method_found_in_class = True
-                    try:
-                        function_name = member.name
-                        body_str = str(member.body) if member.body else ""
-                        
-                        loc_count = body_str.count('\n') + 1 if body_str else 0
-                        fanout_value = count_fanout_method(body_str) if body_str else 0
-                        fanout_method_values[function_name] = fanout_value  # Simpan nilai FANOUT_method
-                        atld_value = count_atld_method(member, class_fields)
+                    function_name = member.name
+                    body_str = str(member.body) if member.body else ""
+                    
+                    loc_count = body_str.count('\n') + 1 if body_str else 0
+                    fanout_value = count_fanout_method(body_str, {m.name for m in class_declaration.body.members if isinstance(m, node.FunctionDeclaration)}) #
+                    atld_value = count_atld_method(member, class_fields) #
+                    cfnamm_value = cfnamm_results.get(function_name, 0.0) #
+                    
+                    fanout_method_values[function_name] = fanout_value
 
-                        cfnamm_value = cfnamm_total.get(function_name, 0.0)
-                        if isinstance(cfnamm_value, dict):
-                            cfnamm_value = 0.0
+                    results_for_file.append({
+                        "Package": package_name,
+                        "Class": class_name,
+                        "Method": function_name,
+                        "LOC": loc_count,
+                        "NOMNAMM_type": nomnamm_total,
+                        "NOA_type": noa_total,
+                        "NIM_type": nim_total,
+                        "ATFD_type": atfd_total,
+                        "DIT_type": dit_total,
+                        "FANOUT_type": 0,  # Placeholder, akan diisi setelah loop
+                        "FANOUT_method": fanout_value,
+                        "ATLD_method": atld_value,
+                        "CFNAMM_method": cfnamm_value,
+                        "Error": ""
+                    })
 
-                        results_for_file.append({
-                            "Package": package_name,
-                            "Class": class_name,
-                            "Method": function_name,
-                            "LOC": loc_count,
-                            "NOMNAMM_type": nomnamm_total,
-                            "NOA_type": noa_total,
-                            "NIM_type": nim_total,
-                            "ATFD_type": atfd_total,
-                            "DIT_type": dit_total, # Tambahkan DIT_type per baris method
-                            "FANOUT_method": fanout_value,
-                            "ATLD_method": atld_value,
-                            "CFNAMM_method": float(cfnamm_value),
-                            "Error": ""
-                            # FANOUT_type akan ditambahkan setelah loop
-                        })
-                    except Exception as e:
-                        # Tangani error per method, bukan per file
-                        results_for_file.append({
-                            "Package": package_name,
-                            "Class": class_name,
-                            "Method": getattr(member, 'name', 'Error_Method'),
-                            "LOC": 0,
-                            "NOMNAMM_type": nomnamm_total,
-                            "NOA_type": noa_total,
-                            "NIM_type": nim_total,
-                            "ATFD_type": atfd_total,
-                            "DIT_type": dit_total, # Tambahkan DIT_type pada error method
-                            "FANOUT_method": 0,
-                            "ATLD_method": 0,
-                            "CFNAMM_method": 0.0,
-                            "Error": f"Error processing method: {str(e)}"
-                            # FANOUT_type akan ditambahkan setelah loop
-                        })
-                        continue # Lanjutkan ke method berikutnya
+            # --- Finalisasi Metrik Tingkat Kelas (setelah semua method diproses) ---
+            fanout_type_total = sum(fanout_method_values.values()) #
 
-            # Setelah loop methods, hitung FANOUT_type
-            fanout_type_total = count_fanout_type(class_declaration, fanout_method_values)
-
-            # Jika kelas tidak memiliki fungsi, tambahkan satu baris untuk kelas tersebut
+            # Kasus 3: Kelas punya body tapi tidak punya method
             if not method_found_in_class:
+                class_loc = len(str(class_declaration.body).splitlines()) if class_declaration.body else 0
                 results_for_file.append({
-                    "Package": package_name,
-                    "Class": class_name,
-                    "Method": "None",
-                    "LOC": len(str(class_declaration.body).splitlines()) if class_declaration.body else 0,
-                    "NOMNAMM_type": nomnamm_total,
-                    "NOA_type": noa_total,
-                    "NIM_type": nim_total,
-                    "ATFD_type": atfd_total,
-                    "DIT_type": dit_total, # Tambahkan DIT_type pada kelas tanpa fungsi
-                    "FANOUT_type": fanout_type_total, # Tambahkan FANOUT_type
-                    "FANOUT_method": 0,
-                    "ATLD_method": 0,
-                    "CFNAMM_method": 0.0,
-                    "Error": "No functions found in class"
+                    "Package": package_name, "Class": class_name, "Method": "None", "LOC": class_loc,
+                    "NOMNAMM_type": nomnamm_total, "NOA_type": noa_total, "NIM_type": nim_total,
+                    "ATFD_type": atfd_total, "DIT_type": dit_total, "FANOUT_type": fanout_type_total,
+                    "FANOUT_method": 0, "ATLD_method": 0.0, "CFNAMM_method": 0.0,
+                    "Error": "No methods found in class"
                 })
             else:
-                # Tambahkan FANOUT_type ke setiap baris hasil yang memiliki class_name yang sama
-                for result in results_for_file:
-                    if result["Class"] == class_name:
-                        result["FANOUT_type"] = fanout_type_total
+                # Tambahkan nilai FANOUT_type ke semua baris method dari kelas ini
+                for row in results_for_file:
+                    if row["Class"] == class_name:
+                        row["FANOUT_type"] = fanout_type_total
 
     except Exception as e:
-        # Ini adalah fallback jika parsing file itu sendiri gagal
+        # Menangani error fatal saat parsing file
         results_for_file.append({
-            "Package": "Error",
-            "Class": "Error", 
-            "Method": "Error",
-            "LOC": 0,
-            "NOMNAMM_type": 0,
-            "NOA_type": 0,
-            "NIM_type": 0,
-            "ATFD_type": 0,
-            "DIT_type": 0, # Default 0 pada error fatal
-            "FANOUT_type": 0, # Tambahkan FANOUT_type dengan default 0
-            "FANOUT_method": 0,
-            "ATLD_method": 0,
-            "CFNAMM_method": 0.0,
-            "Error": f"Fatal error parsing file: {str(e)}"
+            "Package": "Error", "Class": os.path.basename(file_path), "Method": "Error", "LOC": 0,
+            "NOMNAMM_type": 0, "NOA_type": 0, "NIM_type": 0,
+            "ATFD_type": 0, "DIT_type": 0, "FANOUT_type": 0,
+            "FANOUT_method": 0, "ATLD_method": 0.0, "CFNAMM_method": 0.0,
+            "Error": f"Fatal parsing error: {str(e)}"
         })
-
-    # Pastikan tidak ada dict yang tersisa dalam output akhir
-    for row in results_for_file:
-        for k, v in row.items():
-            if isinstance(v, dict):
-                row[k] = str(v) 
 
     return results_for_file
 
