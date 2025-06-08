@@ -91,9 +91,14 @@ def count_nim_type(class_declaration):
     return nim_count
 
 def count_atfd_type(class_declaration):
-    foreign_accesses = set()
+    """
+    Count Access to Foreign Data (ATFD) by scanning for external class field/method accesses.
+    Uses string pattern matching to identify foreign data accesses.
+    """
+    if not hasattr(class_declaration, 'body') or class_declaration.body is None:
+        return 0
 
-    # Collect current class field names (including MultiVariableDeclaration)
+    # Get current class field names
     current_fields = set()
     for member in class_declaration.body.members:
         if isinstance(member, node.PropertyDeclaration):
@@ -104,71 +109,68 @@ def count_atfd_type(class_declaration):
                 for var in decl.sequence:
                     current_fields.add(var.name)
 
-    def collect_foreign_accesses(expr):
-        # Handle PostfixUnaryExpression (existing case)
-        if isinstance(expr, node.PostfixUnaryExpression):
-            if isinstance(expr.expression, node.Identifier):
-                root_name = expr.expression.value
-                if root_name not in current_fields and root_name != "this":
-                    foreign_accesses.add(root_name)
+    foreign_accesses = set()
+    code_str = str(class_declaration.body)
 
-            if hasattr(expr, 'suffixes'):
-                for suffix in expr.suffixes:
-                    if isinstance(suffix, node.NavigationSuffix):
-                        if isinstance(expr.expression, node.Identifier):
-                            base = expr.expression.value
-                            if base not in current_fields and base != "this":
-                                foreign_accesses.add(base)
+    # Split code into tokens while preserving dots for chained accesses
+    tokens = []
+    current_token = ""
+    for char in code_str:
+        if char.isalnum() or char in ('.', '_'):
+            current_token += char
+        else:
+            if current_token:
+                tokens.append(current_token)
+                current_token = ""
+    
+    # Check each token for foreign access patterns
+    for i, token in enumerate(tokens):
+        # Case 1: Direct field access (object.field)
+        if '.' in token and not token.startswith(('"', "'")):
+            parts = token.split('.')
+            base = parts[0]
+            
+            if (base not in current_fields and 
+                base not in ('this', 'super') and 
+                base.isidentifier()):
+                foreign_accesses.add(token)
+        
+        # Case 2: Method call (object.method())
+        if i < len(tokens) - 1 and tokens[i+1] == '(':
+            if (token not in current_fields and 
+                token not in ('this', 'super') and 
+                token.isidentifier()):
+                foreign_accesses.add(token)
+        
+        # Case 3: Chained method result (object.method().field)
+        if i > 0 and tokens[i-1] == ')':
+            if (token not in current_fields and 
+                token not in ('this', 'super') and 
+                token.isidentifier()):
+                foreign_accesses.add(token)
 
-        # Handle Assignments (existing case)
-        elif isinstance(expr, node.Assignment):
-            collect_foreign_accesses(expr.value)
-
-        # Handle simple Identifiers (existing case)
-        elif isinstance(expr, node.Identifier):
-            if expr.value not in current_fields and expr.value != "this":
-                foreign_accesses.add(expr.value)
-
-        # Handle CallExpression (new case using available node types)
-        elif hasattr(node, 'CallExpression') and isinstance(expr, node.CallExpression):
-            if hasattr(expr, 'callee'):
-                # Handle cases like otherClass.method()
-                if isinstance(expr.callee, node.Identifier):
-                    if expr.callee.value not in current_fields and expr.callee.value != "this":
-                        foreign_accesses.add(expr.callee.value)
-                # Handle cases like obj.field.method()
-                elif hasattr(expr.callee, 'expression') and isinstance(expr.callee.expression, node.Identifier):
-                    if expr.callee.expression.value not in current_fields and expr.callee.expression.value != "this":
-                        foreign_accesses.add(expr.callee.expression.value)
-
-        # Handle MemberAccess (alternative to NavigationExpression if available)
-        if hasattr(node, 'MemberAccess') and isinstance(expr, node.MemberAccess):
-            if hasattr(expr, 'expression') and isinstance(expr.expression, node.Identifier):
-                receiver = expr.expression.value
-                if receiver not in current_fields and receiver != "this":
-                    if hasattr(expr, 'selector') and isinstance(expr.selector, node.Identifier):
-                        foreign_accesses.add(f"{receiver}.{expr.selector.value}")
-
-        # Original recursive traversal (unchanged)
-        elif hasattr(expr, "__dict__"):
-            for val in vars(expr).values():
-                if isinstance(val, node.Node):
-                    collect_foreign_accesses(val)
-                elif isinstance(val, (list, tuple)):
-                    for item in val:
-                        if isinstance(item, node.Node):
-                            collect_foreign_accesses(item)
-
-    # Visit all methods in the class (unchanged)
-    for member in class_declaration.body.members:
-        if isinstance(member, node.FunctionDeclaration):
-            body = member.body
-            if isinstance(body, node.Block):
-                for stmt in body.sequence:
-                    if hasattr(stmt, 'statement'):
-                        collect_foreign_accesses(stmt.statement)
-            elif body:  # Handle other body types
-                collect_foreign_accesses(body)
+    # Additional checks for common Android patterns
+    android_patterns = [
+        'getStringExtra',
+        'getIntExtra',
+        'getSerializableExtra',
+        'getSharedPreferences',
+        'getSystemService',
+        'findViewById',
+        'getItemAtPosition'
+    ]
+    
+    for line in code_str.split('\n'):
+        for pattern in android_patterns:
+            if pattern + '(' in line:
+                # Get the receiver if it exists (e.g., "intent.getStringExtra")
+                parts = line.split(pattern)
+                if len(parts) > 1 and '.' in parts[0]:
+                    receiver = parts[0].split('.')[-1].strip()
+                    if receiver and receiver not in current_fields:
+                        foreign_accesses.add(f"{receiver}.{pattern}")
+                else:
+                    foreign_accesses.add(pattern)
 
     return len(foreign_accesses)
 
