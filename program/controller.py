@@ -93,7 +93,7 @@ def count_nim_type(class_declaration):
 def count_atfd_type(class_declaration):
     """
     Count Access to Foreign Data (ATFD) by scanning for external class field/method accesses.
-    Only counts the full chain of foreign accesses (e.g., batteryData.watthours.roundToInt counts as 1).
+    Uses string pattern matching to identify foreign data accesses.
     """
     if not hasattr(class_declaration, 'body') or class_declaration.body is None:
         return 0
@@ -112,70 +112,65 @@ def count_atfd_type(class_declaration):
     foreign_accesses = set()
     code_str = str(class_declaration.body)
 
-    # First, find all potential foreign access chains
-    potential_chains = []
-    current_chain = []
-    in_chain = False
-
-    # Simple tokenizer that preserves dots and identifiers
+    # Split code into tokens while preserving dots for chained accesses
     tokens = []
     current_token = ""
     for char in code_str:
-        if char.isalnum() or char == '.' or char == '_':
+        if char.isalnum() or char in ('.', '_'):
             current_token += char
         else:
             if current_token:
                 tokens.append(current_token)
                 current_token = ""
-            if char != ' ':
-                tokens.append(char)  # preserve other characters as separate tokens
-
-    # Find all dot-separated chains
+    
+    # Check each token for foreign access patterns
     for i, token in enumerate(tokens):
+        # Case 1: Direct field access (object.field)
         if '.' in token and not token.startswith(('"', "'")):
             parts = token.split('.')
-            # Only consider if the first part is a potential foreign object
-            if parts[0] not in current_fields and parts[0] not in ('this', 'super'):
-                potential_chains.append(token)
-
-    # Now process the chains to find the longest unique foreign access
-    for chain in potential_chains:
-        parts = chain.split('.')
-        # Find the longest unique foreign chain
-        for i in range(1, len(parts)):
-            sub_chain = '.'.join(parts[:i+1])
-            # Check if this is a foreign access (first part not from current class)
-            if parts[0] not in current_fields and parts[0] not in ('this', 'super'):
-                # Remove any shorter chains that are prefixes of this one
-                foreign_accesses = {ac for ac in foreign_accesses 
-                                  if not ac.startswith(sub_chain + '.') and ac != sub_chain}
-                foreign_accesses.add(sub_chain)
-                break
-
-    # Additional checks for method calls without dots (like getStringExtra())
-    for line in code_str.split('\n'):
-        # Common Android patterns
-        android_patterns = [
-            'getStringExtra', 'getIntExtra', 'getSerializableExtra',
-            'getSharedPreferences', 'getSystemService', 'findViewById',
-            'getItemAtPosition'
-        ]
+            base = parts[0]
+            
+            if (base not in current_fields and 
+                base not in ('this', 'super') and 
+                base.isidentifier()):
+                foreign_accesses.add(token)
         
+        # Case 2: Method call (object.method())
+        if i < len(tokens) - 1 and tokens[i+1] == '(':
+            if (token not in current_fields and 
+                token not in ('this', 'super') and 
+                token.isidentifier()):
+                foreign_accesses.add(token)
+        
+        # Case 3: Chained method result (object.method().field)
+        if i > 0 and tokens[i-1] == ')':
+            if (token not in current_fields and 
+                token not in ('this', 'super') and 
+                token.isidentifier()):
+                foreign_accesses.add(token)
+
+    # Additional checks for common Android patterns
+    android_patterns = [
+        'getStringExtra',
+        'getIntExtra',
+        'getSerializableExtra',
+        'getSharedPreferences',
+        'getSystemService',
+        'findViewById',
+        'getItemAtPosition'
+    ]
+    
+    for line in code_str.split('\n'):
         for pattern in android_patterns:
             if pattern + '(' in line:
-                # Check if it's a method call on some object
-                if '.' + pattern + '(' in line:
-                    # Get the full access chain
-                    start = line.find('.') + 1
-                    end = line.find('(')
-                    full_access = line[start:end].strip()
-                    if full_access not in current_fields:
-                        foreign_accesses.add(full_access)
+                # Get the receiver if it exists (e.g., "intent.getStringExtra")
+                parts = line.split(pattern)
+                if len(parts) > 1 and '.' in parts[0]:
+                    receiver = parts[0].split('.')[-1].strip()
+                    if receiver and receiver not in current_fields:
+                        foreign_accesses.add(f"{receiver}.{pattern}")
                 else:
-                    # Check if it's called on an object we already have in our chains
-                    # If not, count as separate access
-                    if not any(pattern in ac for ac in foreign_accesses):
-                        foreign_accesses.add(pattern)
+                    foreign_accesses.add(pattern)
 
     return len(foreign_accesses)
 
