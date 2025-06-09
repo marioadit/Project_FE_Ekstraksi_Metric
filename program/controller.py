@@ -93,12 +93,12 @@ def count_nim_type(class_declaration):
 def count_atfd_type(class_declaration):
     """
     Count Access to Foreign Data (ATFD) by scanning for external class field/method accesses.
-    Uses string pattern matching to identify foreign data accesses.
+    Uses token inspection to identify foreign data accesses, without regex.
+    Prevents counting nested property chains like 'a.b' and 'a.b.c' as separate.
     """
     if not hasattr(class_declaration, 'body') or class_declaration.body is None:
         return 0
 
-    # Get current class field names
     current_fields = set()
     for member in class_declaration.body.members:
         if isinstance(member, node.PropertyDeclaration):
@@ -112,7 +112,6 @@ def count_atfd_type(class_declaration):
     foreign_accesses = set()
     code_str = str(class_declaration.body)
 
-    # Split code into tokens while preserving dots for chained accesses
     tokens = []
     current_token = ""
     for char in code_str:
@@ -122,57 +121,29 @@ def count_atfd_type(class_declaration):
             if current_token:
                 tokens.append(current_token)
                 current_token = ""
-    
-    # Check each token for foreign access patterns
+    if current_token:
+        tokens.append(current_token)
+
+    candidate_accesses = set()
+
     for i, token in enumerate(tokens):
-        # Case 1: Direct field access (object.field)
         if '.' in token and not token.startswith(('"', "'")):
             parts = token.split('.')
             base = parts[0]
-            
-            if (base not in current_fields and 
-                base not in ('this', 'super') and 
-                base.isidentifier()):
-                foreign_accesses.add(token)
-        
-        # Case 2: Method call (object.method())
-        if i < len(tokens) - 1 and tokens[i+1] == '(':
-            if (token not in current_fields and 
-                token not in ('this', 'super') and 
-                token.isidentifier()):
-                foreign_accesses.add(token)
-        
-        # Case 3: Chained method result (object.method().field)
-        if i > 0 and tokens[i-1] == ')':
-            if (token not in current_fields and 
-                token not in ('this', 'super') and 
-                token.isidentifier()):
-                foreign_accesses.add(token)
 
-    # Additional checks for common Android patterns
-    android_patterns = [
-        'getStringExtra',
-        'getIntExtra',
-        'getSerializableExtra',
-        'getSharedPreferences',
-        'getSystemService',
-        'findViewById',
-        'getItemAtPosition'
-    ]
-    
-    for line in code_str.split('\n'):
-        for pattern in android_patterns:
-            if pattern + '(' in line:
-                # Get the receiver if it exists (e.g., "intent.getStringExtra")
-                parts = line.split(pattern)
-                if len(parts) > 1 and '.' in parts[0]:
-                    receiver = parts[0].split('.')[-1].strip()
-                    if receiver and receiver not in current_fields:
-                        foreign_accesses.add(f"{receiver}.{pattern}")
-                else:
-                    foreign_accesses.add(pattern)
+            if base not in current_fields and base not in ('this', 'super') and base.isidentifier():
+                candidate_accesses.add(token)
 
-    return len(foreign_accesses)
+    # 🔥 Filter: remove parent chains if longer ones exist
+    filtered_accesses = set()
+    for access in candidate_accesses:
+        if not any(
+            access != other and access.startswith(other + ".")
+            for other in candidate_accesses
+        ):
+            filtered_accesses.add(access)
+
+    return len(filtered_accesses)
 
 def count_fanout_method(method_body: str, class_methods=None) -> int:
     """
