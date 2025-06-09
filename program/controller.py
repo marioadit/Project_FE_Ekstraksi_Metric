@@ -92,8 +92,8 @@ def count_nim_type(class_declaration):
 
 def count_atfd_type(class_declaration):
     """
-    Count Access to Foreign Data (ATFD) with improved detection of foreign property accesses.
-    Specifically handles cases like batteryData.xxx and ensures all are counted.
+    Count Access to Foreign Data (ATFD) by scanning for external class field/method accesses.
+    Uses string pattern matching to identify foreign data accesses.
     """
     if not hasattr(class_declaration, 'body') or class_declaration.body is None:
         return 0
@@ -111,53 +111,46 @@ def count_atfd_type(class_declaration):
 
     foreign_accesses = set()
     code_str = str(class_declaration.body)
-    lines = code_str.split('\n')
 
-    # Track all foreign objects we find
-    foreign_objects = set()
-
-    # First pass: Find all potential foreign objects
-    for line in lines:
-        line = line.strip()
-        if not line or line.startswith(('//', '/*', '*')):
-            continue
+    # Split code into tokens while preserving dots for chained accesses
+    tokens = []
+    current_token = ""
+    for char in code_str:
+        if char.isalnum() or char in ('.', '_'):
+            current_token += char
+        else:
+            if current_token:
+                tokens.append(current_token)
+                current_token = ""
+    
+    # Check each token for foreign access patterns
+    for i, token in enumerate(tokens):
+        # Case 1: Direct field access (object.field)
+        if '.' in token and not token.startswith(('"', "'")):
+            parts = token.split('.')
+            base = parts[0]
             
-        # Find all identifiers that might be foreign objects
-        words = line.replace('.', ' ').replace('(', ' ').replace(')', ' ').split()
-        for word in words:
-            if (word.isidentifier() and 
-                word not in current_fields and 
-                word not in ('this', 'super', 'null', 'true', 'false')):
-                foreign_objects.add(word)
+            if (base not in current_fields and 
+                base not in ('this', 'super') and 
+                base.isidentifier()):
+                foreign_accesses.add(token)
+        
+        # Case 2: Method call (object.method())
+        if i < len(tokens) - 1 and tokens[i+1] == '(':
+            if (token not in current_fields and 
+                token not in ('this', 'super') and 
+                token.isidentifier()):
+                foreign_accesses.add(token)
+        
+        # Case 3: Chained method result (object.method().field)
+        if i > 0 and tokens[i-1] == ')':
+            if (token not in current_fields and 
+                token not in ('this', 'super') and 
+                token.isidentifier()):
+                foreign_accesses.add(token)
 
-    # Second pass: Find all accesses to these foreign objects
-    for line in lines:
-        line = line.strip()
-        if not line or line.startswith(('//', '/*', '*')):
-            continue
-            
-        for foreign_obj in foreign_objects:
-            if foreign_obj + '.' in line:
-                # Find all accesses to this foreign object
-                start = 0
-                while True:
-                    pos = line.find(foreign_obj + '.', start)
-                    if pos == -1:
-                        break
-                        
-                    # Get the full access chain
-                    end = pos + len(foreign_obj) + 1
-                    while end < len(line) and (line[end].isalnum() or line[end] == '_' or line[end] == '.'):
-                        end += 1
-                    
-                    access_chain = line[pos:end]
-                    if '.' in access_chain:  # Ensure it's a proper access chain
-                        foreign_accesses.add(access_chain)
-                    
-                    start = end
-
-    # Additional checks for common Android method patterns
-    android_methods = [
+    # Additional checks for common Android patterns
+    android_patterns = [
         'getStringExtra',
         'getIntExtra',
         'getSerializableExtra',
@@ -167,29 +160,18 @@ def count_atfd_type(class_declaration):
         'getItemAtPosition'
     ]
     
-    for line in lines:
-        for method in android_methods:
-            if '.' + method + '(' in line:
-                # Get the object before the method
-                dot_pos = line.find('.' + method)
-                if dot_pos > 0:
-                    base = line[:dot_pos].split()[-1]  # Get the object before the dot
-                    if base and base not in current_fields and base not in ('this', 'super'):
-                        foreign_accesses.add(f"{base}.{method}")
+    for line in code_str.split('\n'):
+        for pattern in android_patterns:
+            if pattern + '(' in line:
+                # Get the receiver if it exists (e.g., "intent.getStringExtra")
+                parts = line.split(pattern)
+                if len(parts) > 1 and '.' in parts[0]:
+                    receiver = parts[0].split('.')[-1].strip()
+                    if receiver and receiver not in current_fields:
+                        foreign_accesses.add(f"{receiver}.{pattern}")
+                else:
+                    foreign_accesses.add(pattern)
 
-    # Special case: Handle all batteryData accesses
-    if 'batteryData' in foreign_objects:
-        battery_accesses = {acc for acc in foreign_accesses if acc.startswith('batteryData.')}
-        # If there are multiple batteryData accesses, count as 1 foreign access
-        if battery_accesses:
-            foreign_accesses.difference_update(battery_accesses)
-            foreign_accesses.add('batteryData')  # Count as single foreign access
-
-    # Add debug print with class name
-    foreign_access_bases = {access.split('.')[0] for access in foreign_accesses}
-    class_name = class_declaration.name if hasattr(class_declaration, 'name') else "Unknown"
-    print(f"Class: {class_name} - Foreign access bases found: {foreign_access_bases}")
-    
     return len(foreign_accesses)
 
 def count_fanout_method(method_body: str, class_methods=None) -> int:
