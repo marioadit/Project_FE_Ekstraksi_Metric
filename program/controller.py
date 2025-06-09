@@ -90,88 +90,67 @@ def count_nim_type(class_declaration):
         
     return nim_count
 
-def count_atfd_type(class_declaration):
+def count_atfd(method_node, class_declaration):
     """
-    Count Access to Foreign Data (ATFD) by scanning for external class field/method accesses.
-    Uses string pattern matching to identify foreign data accesses.
+    Counts Access to Foreign Data (ATFD) for a single method by traversing the AST.
     """
-    if not hasattr(class_declaration, 'body') or class_declaration.body is None:
+    if not hasattr(method_node, 'body') or not isinstance(method_node.body, node.Block):
         return 0
 
-    # Get current class field names
-    current_fields = set()
-    for member in class_declaration.body.members:
-        if isinstance(member, node.PropertyDeclaration):
-            decl = member.declaration
-            if isinstance(decl, node.VariableDeclaration):
-                current_fields.add(decl.name)
-            elif isinstance(decl, node.MultiVariableDeclaration):
-                for var in decl.sequence:
-                    current_fields.add(var.name)
-
     foreign_accesses = set()
-    code_str = str(class_declaration.body)
 
-    # Split code into tokens while preserving dots for chained accesses
-    tokens = []
-    current_token = ""
-    for char in code_str:
-        if char.isalnum() or char in ('.', '_'):
-            current_token += char
-        else:
-            if current_token:
-                tokens.append(current_token)
-                current_token = ""
-    
-    # Check each token for foreign access patterns
-    for i, token in enumerate(tokens):
-        # Case 1: Direct field access (object.field)
-        if '.' in token and not token.startswith(('"', "'")):
-            parts = token.split('.')
-            base = parts[0]
+    # Collect current class field names robustly
+    current_fields = set()
+    if hasattr(class_declaration, 'body') and class_declaration.body is not None:
+        for member in class_declaration.body.members:
+            if isinstance(member, node.PropertyDeclaration):
+                decl = getattr(member, 'declaration', None)
+                if isinstance(decl, node.VariableDeclaration):
+                    current_fields.add(decl.name)
+                elif isinstance(decl, node.MultiVariableDeclaration):
+                    for var in decl.sequence:
+                        current_fields.add(var.name)
+
+    def collect_foreign_accesses(expr):
+        if expr is None:
+            return
             
-            if (base not in current_fields and 
-                base not in ('this', 'super') and 
-                base.isidentifier()):
-                foreign_accesses.add(token)
-        
-        # Case 2: Method call (object.method())
-        if i < len(tokens) - 1 and tokens[i+1] == '(':
-            if (token not in current_fields and 
-                token not in ('this', 'super') and 
-                token.isidentifier()):
-                foreign_accesses.add(token)
-        
-        # Case 3: Chained method result (object.method().field)
-        if i > 0 and tokens[i-1] == ')':
-            if (token not in current_fields and 
-                token not in ('this', 'super') and 
-                token.isidentifier()):
-                foreign_accesses.add(token)
+        if isinstance(expr, node.PostfixUnaryExpression):
+            # Navigate through suffixes, e.g., obj.field or obj.method()
+            if isinstance(expr.expression, node.Identifier):
+                root_name = expr.expression.value
+                if root_name not in current_fields and root_name != "this":
+                    foreign_accesses.add(root_name)
+            
+            for suffix in expr.suffixes:
+                if isinstance(suffix, node.NavigationSuffix):
+                    if isinstance(expr.expression, node.Identifier):
+                        base = expr.expression.value
+                        if base not in current_fields and base != "this":
+                            foreign_accesses.add(base)
 
-    # Additional checks for common Android patterns
-    android_patterns = [
-        'getStringExtra',
-        'getIntExtra',
-        'getSerializableExtra',
-        'getSharedPreferences',
-        'getSystemService',
-        'findViewById',
-        'getItemAtPosition'
-    ]
+        elif isinstance(expr, node.Assignment):
+            collect_foreign_accesses(expr.value)
+
+        elif isinstance(expr, node.Identifier):
+            if expr.value not in current_fields and expr.value != "this":
+                foreign_accesses.add(expr.value)
+
+        elif hasattr(expr, "_dict_"):
+            for val in vars(expr).values():
+                if isinstance(val, node.Node):
+                    collect_foreign_accesses(val)
+                elif isinstance(val, (list, tuple)):
+                    for item in val:
+                        if isinstance(item, node.Node):
+                            collect_foreign_accesses(item)
+
+    # Iterate through statements in the method body
+    if hasattr(method_node.body, 'sequence') and method_node.body.sequence is not None:
+        for stmt in method_node.body.sequence:
+            if hasattr(stmt, 'statement'):
+                collect_foreign_accesses(stmt.statement)
     
-    for line in code_str.split('\n'):
-        for pattern in android_patterns:
-            if pattern + '(' in line:
-                # Get the receiver if it exists (e.g., "intent.getStringExtra")
-                parts = line.split(pattern)
-                if len(parts) > 1 and '.' in parts[0]:
-                    receiver = parts[0].split('.')[-1].strip()
-                    if receiver and receiver not in current_fields:
-                        foreign_accesses.add(f"{receiver}.{pattern}")
-                else:
-                    foreign_accesses.add(pattern)
-
     return len(foreign_accesses)
 
 def count_fanout_method(method_body: str, class_methods=None) -> int:
@@ -447,16 +426,15 @@ def extracted_method(file_path):
             class_name = class_declaration.name
             
             # --- Perhitungan Metrik Tingkat Kelas ---
-            # Metrik ini dihitung sekali per kelas dan nilainya sama untuk semua baris method dari kelas tsb.
-            dit_total = count_dit_by_name(class_declaration) #
+            dit_total = count_dit_by_name(class_declaration)
             
-            # Default values jika kelas tidak punya body
+            # Default values
             nomnamm_total = 0
             noa_total = 0
             nim_total = 0
-            atfd_total = 0
             cfnamm_results = {}
             fanout_method_values = {}
+            atfd_method_values = {}
             class_fields = set()
 
             # Kasus 2: Kelas tidak punya body
@@ -468,14 +446,13 @@ def extracted_method(file_path):
                     "FANOUT_method": 0, "ATLD_method": 0.0, "CFNAMM_method": 0.0,
                     "Error": "Class has no body"
                 })
-                continue # Lanjut ke deklarasi kelas berikutnya
+                continue
 
-            # Jika kelas punya body, hitung metrik tingkat kelas lainnya
-            nomnamm_total = count_nomnamm_type(class_declaration) #
-            noa_total = count_noa_type(class_declaration) #
-            nim_total = count_nim_type(class_declaration) #
-            atfd_total = count_atfd_type(class_declaration) #
-            cfnamm_results = count_cfnamm_method(class_declaration) #
+            # Hitung metrik jika kelas punya body
+            nomnamm_total = count_nomnamm_type(class_declaration)
+            noa_total = count_noa_type(class_declaration)
+            nim_total = count_nim_type(class_declaration)
+            cfnamm_results = count_cfnamm_method(class_declaration)
 
             # Kumpulkan properti kelas untuk perhitungan ATLD
             for member in class_declaration.body.members:
@@ -496,11 +473,13 @@ def extracted_method(file_path):
                     body_str = str(member.body) if member.body else ""
                     
                     loc_count = body_str.count('\n') + 1 if body_str else 0
-                    fanout_value = count_fanout_method(body_str, {m.name for m in class_declaration.body.members if isinstance(m, node.FunctionDeclaration)}) #
-                    atld_value = count_atld_method(member, class_fields) #
-                    cfnamm_value = cfnamm_results.get(function_name, 0.0) #
+                    fanout_value = count_fanout_method(body_str, {m.name for m in class_declaration.body.members if isinstance(m, node.FunctionDeclaration)})
+                    atld_value = count_atld_method(member, class_fields)
+                    cfnamm_value = cfnamm_results.get(function_name, 0.0)
+                    atfd_value = count_atfd(member, class_declaration)
                     
                     fanout_method_values[function_name] = fanout_value
+                    atfd_method_values[function_name] = atfd_value
 
                     results_for_file.append({
                         "Package": package_name,
@@ -510,17 +489,18 @@ def extracted_method(file_path):
                         "NOMNAMM_type": nomnamm_total,
                         "NOA_type": noa_total,
                         "NIM_type": nim_total,
-                        "ATFD_type": atfd_total,
+                        "ATFD_type": 0,  # Placeholder
                         "DIT_type": dit_total,
-                        "FANOUT_type": 0,  # Placeholder, akan diisi setelah loop
+                        "FANOUT_type": 0,  # Placeholder
                         "FANOUT_method": fanout_value,
                         "ATLD_method": atld_value,
                         "CFNAMM_method": cfnamm_value,
                         "Error": ""
                     })
 
-            # --- Finalisasi Metrik Tingkat Kelas (setelah semua method diproses) ---
-            fanout_type_total = sum(fanout_method_values.values()) #
+            # --- Finalisasi Metrik Tingkat Kelas ---
+            fanout_type_total = sum(fanout_method_values.values())
+            atfd_type_total = sum(atfd_method_values.values())
 
             # Kasus 3: Kelas punya body tapi tidak punya method
             if not method_found_in_class:
@@ -528,15 +508,16 @@ def extracted_method(file_path):
                 results_for_file.append({
                     "Package": package_name, "Class": class_name, "Method": "None", "LOC": class_loc,
                     "NOMNAMM_type": nomnamm_total, "NOA_type": noa_total, "NIM_type": nim_total,
-                    "ATFD_type": atfd_total, "DIT_type": dit_total, "FANOUT_type": fanout_type_total,
+                    "ATFD_type": atfd_type_total, "DIT_type": dit_total, "FANOUT_type": fanout_type_total,
                     "FANOUT_method": 0, "ATLD_method": 0.0, "CFNAMM_method": 0.0,
                     "Error": "No methods found in class"
                 })
             else:
-                # Tambahkan nilai FANOUT_type ke semua baris method dari kelas ini
+                # Update placeholder ATFD_type dan FANOUT_type di setiap baris
                 for row in results_for_file:
                     if row["Class"] == class_name:
                         row["FANOUT_type"] = fanout_type_total
+                        row["ATFD_type"] = atfd_type_total
 
     except Exception as e:
         # Menangani error fatal saat parsing file
@@ -582,5 +563,6 @@ def extract_and_parse(file):
                 "FANOUT_method": 0,
                 "ATLD_method": 0,
                 "CFNAMM_method": 0.0,
+                "ATFD_method": 0,
                 "Error": f"Archive extraction or file search failed: {str(e)}"
             }])
